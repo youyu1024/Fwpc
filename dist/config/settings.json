@@ -1,0 +1,8 @@
+﻿{
+    "monitorIntervalSec":  8,
+    "bitrate":  "6M",
+    "maxFps":  30,
+    "maxSize":  1280,
+    "language":  "zh-CN",
+    "theme":  "light"
+}

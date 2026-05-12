@@ -1,0 +1,29 @@
+Wi-Fi Phone Control - Quick Start
+
+1) Build EXE
+   - Double click: build-release.cmd
+
+2) Start app (no CMD)
+   - Double click: dist\WiFiPhoneControl.exe
+
+3) First pairing
+   - Device: Developer options -> Wireless debugging -> Pair device with pairing code
+   - Fill Pair Endpoint + Pair Code
+   - Click Pair & Connect
+
+4) Daily use
+   - Ensure Connected
+   - Start Control (scrcpy)
+
+5) UI features
+   - Language: Chinese / English
+   - Theme: Dark / Light
+   - Profile list selection
+   - Edit profile name on right, then Save Profile
+   - Delete selected profile if needed
+
+6) Output EXE
+   - dist\WiFiPhoneControl.exe
+
+7) Optional bundled dependencies
+   - Put full scrcpy Windows package under runtime\scrcpy\

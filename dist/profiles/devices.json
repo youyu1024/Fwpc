@@ -1,0 +1,13 @@
+﻿{
+    "defaultProfile":  "oneplus",
+    "items":  [
+                  {
+                      "name":  "default",
+                      "endpoint":  ""
+                  },
+                  {
+                      "name":  "oneplus",
+                      "endpoint":  ""
+                  }
+              ]
+}

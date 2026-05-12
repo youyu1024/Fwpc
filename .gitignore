@@ -1,0 +1,14 @@
+dist\
+logs\
+state\
+
+# PowerShell / editors
+*.user
+*.suo
+*.tmp
+*.bak
+*.log
+
+# OS
+Thumbs.db
+Desktop.ini
