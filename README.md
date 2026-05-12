@@ -106,19 +106,6 @@ Output:
 dist\WiFiPhoneControl.exe
 ```
 
-## Legacy Compatibility Entry Points
-
-- `OPPO_Pad2_Wireless_Pair.cmd`
-- `OPPO_Pad2_WiFi_Control.cmd`
-
-Both are kept for backward compatibility.
-
-## Publishing to GitHub
-
-1. Create a GitHub repository.
-2. Push this folder.
-3. Add release notes and upload `dist\WiFiPhoneControl.exe` as release asset (optional).
-
 ## License
 
 MIT License. See [LICENSE](LICENSE).
