@@ -83,6 +83,8 @@ $i18n = @{
     state_reconnecting = "重连中"
     state_disconnected = "未连接"
     state_pairing_required = "需要重新配对"
+    msg_runtime_missing = "缺少运行时：未找到 runtime\scrcpy。请检查 release 包是否完整，或确认该目录未被误删。"
+    msg_runtime_fix_guide = "修复指引：请检查并恢复路径 runtime\scrcpy（需包含 scrcpy.exe 与 adb.exe）。高级用户可手动执行 winget install Genymobile.scrcpy。"
   }
   "en-US" = @{
     app_title = "Wi-Fi Phone Control"
@@ -126,6 +128,8 @@ $i18n = @{
     state_reconnecting = "Reconnecting"
     state_disconnected = "Disconnected"
     state_pairing_required = "Pairing Required"
+    msg_runtime_missing = "Runtime missing: runtime\scrcpy was not found. Check whether the release package is incomplete or the folder was deleted."
+    msg_runtime_fix_guide = "Fix guide: restore runtime\scrcpy (must include scrcpy.exe and adb.exe). Advanced users may run winget install Genymobile.scrcpy manually."
   }
 }
 
@@ -211,6 +215,14 @@ function Set-UiStatus {
   }
   $lblEndpointValue.Text = $txtConnectEndpoint.Text.Trim()
   if ($Message) { Append-Log -Message "$($lblStatusValue.Text): $Message" }
+}
+
+function Show-RuntimeRepairHint {
+  $missingMsg = T "msg_runtime_missing"
+  $guideMsg = T "msg_runtime_fix_guide"
+  Append-Log -Message $missingMsg -Level "ERROR"
+  Append-Log -Message $guideMsg -Level "WARN"
+  [System.Windows.Forms.MessageBox]::Show("$missingMsg`n`n$guideMsg", (T "app_title"), [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
 }
 
 function Set-ThemeColors {
@@ -612,6 +624,13 @@ $btnConnect.Add_Click({
 
 $btnControl.Add_Click({
     try {
+      $runtimePath = Join-Path $appRoot "runtime\scrcpy"
+      if (-not (Test-Path $runtimePath)) {
+        Show-RuntimeRepairHint
+        Set-UiStatus -Status "disconnected" -Message (T "msg_runtime_missing")
+        return
+      }
+
       $ensure = Invoke-DeviceConnection -PreferredEndpoint $txtControlEndpoint.Text.Trim()
       if (-not $ensure.Success) {
         Set-UiStatus -Status "pairing-required" -Message $ensure.Message
@@ -622,12 +641,21 @@ $btnControl.Add_Click({
       $start = Start-ScrcpyControl -Endpoint $ensure.Endpoint -Bitrate $settings.bitrate -MaxFps $settings.maxFps -MaxSize $settings.maxSize
       if (-not $start.Success) {
         Set-UiStatus -Status "disconnected" -Message $start.Message
+        if ($start.Message -like "*runtime\scrcpy*" -or $start.Message -like "*scrcpy.exe not found*") {
+          Show-RuntimeRepairHint
+        }
         return
       }
       Set-UiStatus -Status "connected" -Message $start.Message
     }
     catch {
-      Set-UiStatus -Status "pairing-required" -Message $_.Exception.Message
+      if ($_.Exception.Message -like "*runtime\scrcpy*" -or $_.Exception.Message -like "*scrcpy.exe not found*") {
+        Show-RuntimeRepairHint
+        Set-UiStatus -Status "disconnected" -Message $_.Exception.Message
+      }
+      else {
+        Set-UiStatus -Status "pairing-required" -Message $_.Exception.Message
+      }
     }
   })
 
