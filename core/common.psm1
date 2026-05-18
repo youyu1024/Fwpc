@@ -56,9 +56,36 @@ function Write-JsonFile {
 }
 
 function Get-ScrcpyPackageRoot {
+  param(
+    [switch]$AllowWingetInstall
+  )
+
   $bundledRoot = Join-Path (Get-AppRoot) "runtime\scrcpy"
-  if (Test-Path (Join-Path $bundledRoot "scrcpy.exe")) {
+  $bundledScrcpy = Join-Path $bundledRoot "scrcpy.exe"
+  $runtimeExists = Test-Path $bundledRoot
+
+  if (Test-Path $bundledScrcpy) {
     return $bundledRoot
+  }
+
+  if (-not $runtimeExists) {
+    throw "runtime\scrcpy directory is missing. This release package may be incomplete or the folder was deleted by mistake. Please restore runtime\scrcpy first. Advanced manual option: install Genymobile.scrcpy with winget."
+  }
+
+  if (-not $AllowWingetInstall) {
+    throw "scrcpy.exe not found in runtime\scrcpy. Please verify runtime\scrcpy contains the full scrcpy Windows package. Advanced manual option: install Genymobile.scrcpy with winget."
+  }
+
+  $winget = Get-Command winget -ErrorAction SilentlyContinue
+  if (-not $winget) {
+    throw "scrcpy.exe not found in runtime\scrcpy, and winget is unavailable. Please restore runtime\scrcpy or manually install Genymobile.scrcpy."
+  }
+
+  try {
+    & winget install -e --id Genymobile.scrcpy --accept-source-agreements --accept-package-agreements --silent | Out-Null
+  }
+  catch {
+    throw "Failed to install Genymobile.scrcpy via winget. Please repair runtime\scrcpy manually. Error: $($_.Exception.Message)"
   }
 
   $packageRoot = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Directory |
@@ -67,22 +94,9 @@ function Get-ScrcpyPackageRoot {
     Select-Object -First 1
 
   if (-not $packageRoot) {
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-    if ($winget) {
-      try {
-        & winget install -e --id Genymobile.scrcpy --accept-source-agreements --accept-package-agreements --silent | Out-Null
-      }
-      catch {}
-      $packageRoot = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Directory |
-        Where-Object { $_.Name -like "Genymobile.scrcpy*" } |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    }
+    throw "winget installation completed but scrcpy package path was not found. Please repair runtime\scrcpy manually."
   }
 
-  if (-not $packageRoot) {
-    throw "scrcpy not found. Install Genymobile.scrcpy with winget or place full scrcpy Windows package in runtime\\scrcpy\\."
-  }
   return $packageRoot.FullName
 }
 
