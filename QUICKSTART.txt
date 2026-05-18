@@ -1,10 +1,13 @@
 Wi-Fi Phone Control - Quick Start
 
-1) Build EXE
+1) Build release package
    - Double click: build-release.cmd
+   - Output: dist\WiFiPhoneControl-v1.0.0-win-x64.zip
 
-2) Start app (no CMD)
-   - Double click: dist\WiFiPhoneControl.exe
+2) Release usage (recommended)
+   - Extract dist\WiFiPhoneControl-v1.0.0-win-x64.zip
+   - Double click: WiFiPhoneControl.exe
+   - Runtime is already bundled (no winget needed)
 
 3) First pairing
    - Device: Developer options -> Wireless debugging -> Pair device with pairing code
@@ -22,8 +25,9 @@ Wi-Fi Phone Control - Quick Start
    - Edit profile name on right, then Save Profile
    - Delete selected profile if needed
 
-6) Output EXE
+6) Build outputs
    - dist\WiFiPhoneControl.exe
+   - dist\WiFiPhoneControl-v1.0.0-win-x64.zip
 
-7) Optional bundled dependencies
-   - Put full scrcpy Windows package under runtime\scrcpy\
+7) Source build requirement
+   - Put full official scrcpy Windows package under runtime\scrcpy\ before building release
