@@ -119,3 +119,20 @@ MIT License. See [LICENSE](LICENSE).
 - `runtime/scrcpy/AdbWinUsbApi.dll`
 
 If any required runtime file is missing, build will fail before release.
+
+## Release Process Gate
+
+Before publishing `WiFiPhoneControl-vX.Y.Z-win-x64.zip`, you must pass:
+
+1. **Artifact check** and
+2. **Manual acceptance sign-off**
+
+Follow the checklist in `docs/release-acceptance.md`. If checklist items are incomplete, the release ZIP must not be published.
+
+### Required release note content
+
+Every release note must include:
+
+- System requirements: Windows 10/11 x64
+- Bundled dependency versions (at least `scrcpy` and `adb`)
+- Acceptance verification statement (fresh/offline environment)
