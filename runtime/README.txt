@@ -1,8 +1,10 @@
-Optional portable dependencies folder.
+Runtime folder note
 
-For fresh PCs, DO NOT copy only 2 exe files.
-Please place the full official scrcpy Windows package under:
-- runtime\scrcpy\
+Source checkout:
+- runtime\scrcpy is not committed.
+- tools\build-release.ps1 downloads the pinned official scrcpy Windows x64 release automatically.
 
-It should include scrcpy.exe, adb.exe, required DLLs, and other release files.
-The app will prefer bundled runtime first.
+Release ZIP:
+- runtime\scrcpy must contain the full official scrcpy Windows x64 package.
+- Required files include scrcpy.exe, adb.exe, AdbWinApi.dll, AdbWinUsbApi.dll, scrcpy-server, SDL DLLs, and FFmpeg DLLs.
+- The app treats missing runtime files as an incomplete release package and does not install dependencies online.

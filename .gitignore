@@ -1,6 +1,8 @@
-dist\
-logs\
-state\
+dist/
+logs/
+state/
+.cache/
+release/*.zip
 
 # PowerShell / editors
 *.user

@@ -1,33 +1,28 @@
 Wi-Fi Phone Control - Quick Start
 
-1) Build release package
-   - Double click: build-release.cmd
-   - Output: dist\WiFiPhoneControl-v1.0.0-win-x64.zip
+System requirements:
+- Windows 10/11 x64
+- Android wireless debugging enabled
+- PC and Android device on a reachable network
 
-2) Release usage (recommended)
-   - Extract dist\WiFiPhoneControl-v1.0.0-win-x64.zip
-   - Double click: WiFiPhoneControl.exe
-   - Runtime is already bundled (no winget needed)
+Release usage:
+1) Download WiFiPhoneControl-v1.0.0-win-x64.zip.
+2) Extract the ZIP to a local folder.
+3) Double-click WiFiPhoneControl.exe.
+4) On the Android device, open:
+   Developer options -> Wireless debugging -> Pair device with pairing code
+5) In the app, fill Pair Endpoint and Pair Code.
+6) Click Pair & Connect.
+7) Click Start Control (scrcpy).
 
-3) First pairing
-   - Device: Developer options -> Wireless debugging -> Pair device with pairing code
-   - Fill Pair Endpoint + Pair Code
-   - Click Pair & Connect
+Bundled dependencies:
+- scrcpy 4.0
+- adb 37.0.0
+- Full official scrcpy Windows x64 runtime under runtime\scrcpy
 
-4) Daily use
-   - Ensure Connected
-   - Start Control (scrcpy)
+No separate scrcpy, adb, platform-tools, or winget install is required for release users.
 
-5) UI features
-   - Language: Chinese / English
-   - Theme: Dark / Light
-   - Profile list selection
-   - Edit profile name on right, then Save Profile
-   - Delete selected profile if needed
-
-6) Build outputs
-   - dist\WiFiPhoneControl.exe
-   - dist\WiFiPhoneControl-v1.0.0-win-x64.zip
-
-7) Source build requirement
-   - Put full official scrcpy Windows package under runtime\scrcpy\ before building release
+Build from source:
+1) Double-click build-release.cmd, or run .\build-release.cmd in PowerShell.
+2) Output: release\WiFiPhoneControl-v1.0.0-win-x64.zip
+3) The build script downloads and verifies scrcpy-win64-v4.0.zip automatically.

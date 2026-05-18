@@ -83,8 +83,8 @@ $i18n = @{
     state_reconnecting = "重连中"
     state_disconnected = "未连接"
     state_pairing_required = "需要重新配对"
-    msg_runtime_missing = "缺少运行时：未找到 runtime\scrcpy。请检查 release 包是否完整，或确认该目录未被误删。"
-    msg_runtime_fix_guide = "修复指引：请检查并恢复路径 runtime\scrcpy（需包含 scrcpy.exe 与 adb.exe）。高级用户可手动执行 winget install Genymobile.scrcpy。"
+    msg_runtime_missing = "Release 包不完整：runtime\scrcpy 缺少必需文件。"
+    msg_runtime_fix_guide = "修复指引：请重新下载并完整解压 release zip，或重新构建 release 包。解压即用版本不会自动联网安装依赖。"
   }
   "en-US" = @{
     app_title = "Wi-Fi Phone Control"
@@ -128,8 +128,8 @@ $i18n = @{
     state_reconnecting = "Reconnecting"
     state_disconnected = "Disconnected"
     state_pairing_required = "Pairing Required"
-    msg_runtime_missing = "Runtime missing: runtime\scrcpy was not found. Check whether the release package is incomplete or the folder was deleted."
-    msg_runtime_fix_guide = "Fix guide: restore runtime\scrcpy (must include scrcpy.exe and adb.exe). Advanced users may run winget install Genymobile.scrcpy manually."
+    msg_runtime_missing = "Release package is incomplete: runtime\scrcpy is missing required files."
+    msg_runtime_fix_guide = "Fix guide: download and extract the release zip again, or rebuild the release package. The portable release does not install dependencies online."
   }
 }
 
@@ -218,11 +218,26 @@ function Set-UiStatus {
 }
 
 function Show-RuntimeRepairHint {
+  param([string]$Detail)
+
   $missingMsg = T "msg_runtime_missing"
   $guideMsg = T "msg_runtime_fix_guide"
   Append-Log -Message $missingMsg -Level "ERROR"
+  if ($Detail) { Append-Log -Message $Detail -Level "ERROR" }
   Append-Log -Message $guideMsg -Level "WARN"
-  [System.Windows.Forms.MessageBox]::Show("$missingMsg`n`n$guideMsg", (T "app_title"), [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+  $body = "$missingMsg`n`n$guideMsg"
+  if ($Detail) { $body = "$missingMsg`n`n$Detail`n`n$guideMsg" }
+  [System.Windows.Forms.MessageBox]::Show($body, (T "app_title"), [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+}
+
+function Ensure-RuntimeAvailable {
+  $runtime = Test-ScrcpyRuntime
+  if (-not $runtime.Success) {
+    Show-RuntimeRepairHint -Detail $runtime.Message
+    Set-UiStatus -Status "disconnected" -Message $runtime.Message
+    return $false
+  }
+  return $true
 }
 
 function Set-ThemeColors {
@@ -582,6 +597,7 @@ $btnDeleteProfile.Add_Click({
 
 $btnPair.Add_Click({
     try {
+      if (-not (Ensure-RuntimeAvailable)) { return }
       $pairEndpoint = $txtPairEndpoint.Text.Trim()
       $pairCode = $txtPairCode.Text.Trim()
       $connectEndpoint = $txtConnectEndpoint.Text.Trim()
@@ -600,12 +616,18 @@ $btnPair.Add_Click({
       Set-UiStatus -Status "connected" -Message $result.Message
     }
     catch {
+      if ($_.Exception.Message -like "*runtime\scrcpy*" -or $_.Exception.Message -like "*Release package is incomplete*") {
+        Show-RuntimeRepairHint -Detail $_.Exception.Message
+        Set-UiStatus -Status "disconnected" -Message $_.Exception.Message
+        return
+      }
       Set-UiStatus -Status "pairing-required" -Message $_.Exception.Message
     }
   })
 
 $btnConnect.Add_Click({
     try {
+      if (-not (Ensure-RuntimeAvailable)) { return }
       Set-UiStatus -Status "reconnecting" -Message (T "msg_connecting")
       $result = Invoke-DeviceConnection -PreferredEndpoint $txtControlEndpoint.Text.Trim()
       if ($result.Success) {
@@ -618,18 +640,18 @@ $btnConnect.Add_Click({
       }
     }
     catch {
+      if ($_.Exception.Message -like "*runtime\scrcpy*" -or $_.Exception.Message -like "*Release package is incomplete*") {
+        Show-RuntimeRepairHint -Detail $_.Exception.Message
+        Set-UiStatus -Status "disconnected" -Message $_.Exception.Message
+        return
+      }
       Set-UiStatus -Status "pairing-required" -Message $_.Exception.Message
     }
   })
 
 $btnControl.Add_Click({
     try {
-      $runtimePath = Join-Path $appRoot "runtime\scrcpy"
-      if (-not (Test-Path $runtimePath)) {
-        Show-RuntimeRepairHint
-        Set-UiStatus -Status "disconnected" -Message (T "msg_runtime_missing")
-        return
-      }
+      if (-not (Ensure-RuntimeAvailable)) { return }
 
       $ensure = Invoke-DeviceConnection -PreferredEndpoint $txtControlEndpoint.Text.Trim()
       if (-not $ensure.Success) {
@@ -641,16 +663,16 @@ $btnControl.Add_Click({
       $start = Start-ScrcpyControl -Endpoint $ensure.Endpoint -Bitrate $settings.bitrate -MaxFps $settings.maxFps -MaxSize $settings.maxSize
       if (-not $start.Success) {
         Set-UiStatus -Status "disconnected" -Message $start.Message
-        if ($start.Message -like "*runtime\scrcpy*" -or $start.Message -like "*scrcpy.exe not found*") {
-          Show-RuntimeRepairHint
+        if ($start.Message -like "*runtime\scrcpy*" -or $start.Message -like "*Release package is incomplete*" -or $start.Message -like "*scrcpy.exe not found*") {
+          Show-RuntimeRepairHint -Detail $start.Message
         }
         return
       }
       Set-UiStatus -Status "connected" -Message $start.Message
     }
     catch {
-      if ($_.Exception.Message -like "*runtime\scrcpy*" -or $_.Exception.Message -like "*scrcpy.exe not found*") {
-        Show-RuntimeRepairHint
+      if ($_.Exception.Message -like "*runtime\scrcpy*" -or $_.Exception.Message -like "*Release package is incomplete*" -or $_.Exception.Message -like "*scrcpy.exe not found*") {
+        Show-RuntimeRepairHint -Detail $_.Exception.Message
         Set-UiStatus -Status "disconnected" -Message $_.Exception.Message
       }
       else {
@@ -676,6 +698,11 @@ $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = [int]$settings.monitorIntervalSec * 1000
 $timer.Add_Tick({
     if (-not $chkMonitor.Checked) { return }
+    $runtime = Test-ScrcpyRuntime
+    if (-not $runtime.Success) {
+      Set-UiStatus -Status "disconnected" -Message $runtime.Message
+      return
+    }
     $state = Get-ConnectionStatus -Endpoint $txtControlEndpoint.Text.Trim()
     if ($state.Endpoint) {
       $txtControlEndpoint.Text = $state.Endpoint
@@ -694,4 +721,9 @@ $timer.Start()
 
 Append-Log -Message "GUI started."
 Set-UiStatus -Status "disconnected" -Message ""
+$startupRuntime = Test-ScrcpyRuntime
+if (-not $startupRuntime.Success) {
+  Show-RuntimeRepairHint -Detail $startupRuntime.Message
+  Set-UiStatus -Status "disconnected" -Message $startupRuntime.Message
+}
 [void]$form.ShowDialog()

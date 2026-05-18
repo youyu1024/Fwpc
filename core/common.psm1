@@ -55,49 +55,71 @@ function Write-JsonFile {
   Set-Content -Path $Path -Value $json -Encoding UTF8
 }
 
-function Get-ScrcpyPackageRoot {
+function Test-FilePattern {
   param(
-    [switch]$AllowWingetInstall
+    [Parameter(Mandatory = $true)][string]$Root,
+    [Parameter(Mandatory = $true)][string]$Pattern
   )
 
-  $bundledRoot = Join-Path (Get-AppRoot) "runtime\scrcpy"
-  $bundledScrcpy = Join-Path $bundledRoot "scrcpy.exe"
-  $runtimeExists = Test-Path $bundledRoot
+  $match = Get-ChildItem -Path $Root -File -Filter $Pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+  return [bool]$match
+}
 
-  if (Test-Path $bundledScrcpy) {
-    return $bundledRoot
+function Test-ScrcpyRuntime {
+  param([string]$RuntimeRoot = (Join-Path (Get-AppRoot) "runtime\scrcpy"))
+
+  if (-not (Test-Path $RuntimeRoot)) {
+    return [pscustomobject]@{
+      Success = $false
+      Root    = $RuntimeRoot
+      Missing = @("runtime\scrcpy")
+      Message = "Release package is incomplete: runtime\scrcpy directory is missing."
+    }
   }
 
-  if (-not $runtimeExists) {
-    throw "runtime\scrcpy directory is missing. This release package may be incomplete or the folder was deleted by mistake. Please restore runtime\scrcpy first. Advanced manual option: install Genymobile.scrcpy with winget."
+  $missing = @()
+  foreach ($required in @("scrcpy.exe", "adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll", "scrcpy-server")) {
+    if (-not (Test-Path (Join-Path $RuntimeRoot $required))) {
+      $missing += $required
+    }
   }
 
-  if (-not $AllowWingetInstall) {
-    throw "scrcpy.exe not found in runtime\scrcpy. Please verify runtime\scrcpy contains the full scrcpy Windows package. Advanced manual option: install Genymobile.scrcpy with winget."
+  foreach ($pattern in @("SDL*.dll", "avcodec-*.dll", "avformat-*.dll", "avutil-*.dll", "swresample-*.dll")) {
+    if (-not (Test-FilePattern -Root $RuntimeRoot -Pattern $pattern)) {
+      $missing += $pattern
+    }
   }
 
-  $winget = Get-Command winget -ErrorAction SilentlyContinue
-  if (-not $winget) {
-    throw "scrcpy.exe not found in runtime\scrcpy, and winget is unavailable. Please restore runtime\scrcpy or manually install Genymobile.scrcpy."
+  if ($missing.Count -gt 0) {
+    return [pscustomobject]@{
+      Success = $false
+      Root    = $RuntimeRoot
+      Missing = $missing
+      Message = "Release package is incomplete: runtime\scrcpy is missing required files: $($missing -join ', ')."
+    }
   }
 
-  try {
-    & winget install -e --id Genymobile.scrcpy --accept-source-agreements --accept-package-agreements --silent | Out-Null
+  return [pscustomobject]@{
+    Success = $true
+    Root    = $RuntimeRoot
+    Missing = @()
+    Message = "Bundled scrcpy runtime is complete."
   }
-  catch {
-    throw "Failed to install Genymobile.scrcpy via winget. Please repair runtime\scrcpy manually. Error: $($_.Exception.Message)"
+}
+
+function Assert-ScrcpyRuntime {
+  param([string]$RuntimeRoot = (Join-Path (Get-AppRoot) "runtime\scrcpy"))
+
+  $result = Test-ScrcpyRuntime -RuntimeRoot $RuntimeRoot
+  if (-not $result.Success) {
+    throw $result.Message
   }
+  return $result
+}
 
-  $packageRoot = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Directory |
-    Where-Object { $_.Name -like "Genymobile.scrcpy*" } |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-
-  if (-not $packageRoot) {
-    throw "winget installation completed but scrcpy package path was not found. Please repair runtime\scrcpy manually."
-  }
-
-  return $packageRoot.FullName
+function Get-ScrcpyPackageRoot {
+  $result = Assert-ScrcpyRuntime
+  return $result.Root
 }
 
 function Get-AdbPath {
@@ -131,4 +153,4 @@ function Write-AppLog {
 
 Export-ModuleMember -Function `
   Get-AppRoot, Get-AppPaths, Read-JsonFile, Write-JsonFile, `
-  Get-AdbPath, Get-ScrcpyPath, Write-AppLog
+  Test-ScrcpyRuntime, Assert-ScrcpyRuntime, Get-AdbPath, Get-ScrcpyPath, Write-AppLog
