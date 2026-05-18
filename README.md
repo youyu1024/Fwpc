@@ -1,6 +1,6 @@
 # WiFi Phone Control
 
-A Windows desktop project for Android **Wi-Fi pairing + control** with built-in `adb` and `scrcpy` runtime in release package.
+A Windows desktop project for Android **Wi-Fi pairing + control** with `adb` and `scrcpy`.
 
 ## Highlights
 
@@ -8,114 +8,87 @@ A Windows desktop project for Android **Wi-Fi pairing + control** with built-in 
 - Chinese / English UI switch
 - Dark / light theme switch
 - Pairing workflow (`adb pair` + auto endpoint detect)
-- Auto reconnect monitor (for sleep/off-screen reconnect attempts)
+- Auto reconnect monitor
 - Multi-profile device endpoint management
-- Optional EXE packaging for release
+- Release ZIP supports **download + extract + run** on fresh Windows PCs
 
 ## Tech Stack
 
 - PowerShell 5.1+
 - Windows Forms (.NET Framework)
-- `adb` and `scrcpy` (release zip already bundles official runtime files)
-- Optional: `ps2exe` module (for building EXE)
+- `adb` + `scrcpy` runtime bundled in release ZIP
+- `ps2exe` (used during build)
 
-## Dependencies
+## Commands
 
-Release package users do not need to install `scrcpy` or `adb` separately.
-
-If you are developing from source and want local fallback tooling, you can still install via winget:
+### 1) Development build (`dist`)
 
 ```powershell
-winget install Genymobile.scrcpy
+.\build-release.cmd
 ```
 
-Optional build dependency:
+What it does:
+
+- Builds `dist\WiFiPhoneControl.exe`
+- Copies `core\`, `config\`, `profiles\`, `runtime\` into `dist\`
+- Produces ZIP in `dist\WiFiPhoneControl-vX.Y.Z-win-x64.zip`
+- Fails fast if runtime is incomplete
+
+### 2) Release packaging (`release`) - recommended for publishing
 
 ```powershell
-Install-Module -Name ps2exe -Scope CurrentUser -Force -AllowClobber
+.\package-release.cmd
 ```
 
-Portable dependency mode (recommended for open-source distribution):
+What it does:
 
-- Do **not** bundle only two exe files.
-- Bundle the **full scrcpy Windows package** (all files), for example:
-  - `runtime\scrcpy\scrcpy.exe`
-  - `runtime\scrcpy\adb.exe`
-  - `runtime\scrcpy\AdbWinApi.dll`
-  - `runtime\scrcpy\AdbWinUsbApi.dll`
-  - `runtime\scrcpy\SDL2.dll`
-  - plus other files from the official release archive
-- App will prefer bundled binaries first.
-- If runtime is missing, app tries winget install fallback.
+- Reads version from `config\release.json`
+- Auto-provisions `runtime\scrcpy\` from official scrcpy GitHub release when missing
+- Builds app and validates runtime/dependency completeness
+- Produces publish artifact in `release\WiFiPhoneControl-vX.Y.Z-win-x64.zip`
 
-## Fresh PC install & run (from GitHub)
+## Fresh PC usage (release user)
 
-1. Download this repository (ZIP) and extract it, e.g. `C:\WiFiPhoneControl`.
-2. Prepare runtime files:
-   - Put the **full official scrcpy Windows release package** under `runtime\scrcpy\` before building release.
-3. Build EXE:
-   ```powershell
-   .\build-release.cmd
-   ```
-4. Run:
-   - Double-click `dist\WiFiPhoneControl.exe`
-5. First use:
-   - Pair in app, then connect, then start control.
+1. Download `WiFiPhoneControl-vX.Y.Z-win-x64.zip` from release assets.
+2. Extract ZIP to any local folder.
+3. Double-click `WiFiPhoneControl.exe`.
+4. Pair device and start control.
 
-Notes:
-- On some clean Windows systems, install Microsoft Visual C++ Redistributable (x64) if scrcpy cannot start.
-- Release ZIP (`dist\WiFiPhoneControl-v1.0.0-win-x64.zip`) already includes `WiFiPhoneControl.exe`, `core/`, `config/`, `profiles/`, and `runtime\scrcpy\`; extract and run directly (no winget required).
+No `winget`, `adb`, or `scrcpy` preinstallation is required for release users.
 
-## Quick Start
+## Runtime requirements for release artifact
 
-1. Build EXE once
-   - Run `build-release.cmd`
-2. Start app (no CMD window)
-   - Double-click `dist\WiFiPhoneControl.exe`
-3. First pairing
-   - On device: Developer options -> Wireless debugging -> Pair device with pairing code
-   - Fill **Pair Endpoint** and **Pair Code**
-   - Click **Pair & Connect**
-4. Start control
-   - Click **Start Control (scrcpy)**
-   - Keep auto monitor enabled
+Release ZIP must include these files:
+
+- `runtime\scrcpy\scrcpy.exe`
+- `runtime\scrcpy\adb.exe`
+- `runtime\scrcpy\AdbWinApi.dll`
+- `runtime\scrcpy\AdbWinUsbApi.dll`
+- `runtime\scrcpy\SDL2.dll`
+
+These are validated by `tools\build-release.ps1` before release packaging succeeds.
+
+## Release gate
+
+Before publishing `WiFiPhoneControl-vX.Y.Z-win-x64.zip`, follow:
+
+- `docs\release-acceptance.md` artifact checklist
+- Fresh/offline acceptance checklist
+
+If any gate item fails, do not publish the ZIP.
 
 ## Project Structure
 
 ```text
 app/        GUI entry script
 core/       reusable modules (common/pairing/control/monitor)
-config/     settings.json
+config/     settings + release metadata
 profiles/   devices.json
 state/      endpoint/ip runtime state
 logs/       daily logs
-tools/      build scripts
-```
-
-## Build Release EXE
-
-```powershell
-.\build-release.cmd
-```
-
-Output:
-
-```text
-dist\WiFiPhoneControl.exe
+tools/      build and packaging scripts
 ```
 
 ## License
 
 MIT License. See [LICENSE](LICENSE).
-
-
-## Release Package Validation
-
-`tools/build-release.ps1` now validates the generated ZIP and requires:
-
-- `runtime/scrcpy/scrcpy.exe`
-- `runtime/scrcpy/adb.exe`
-- `runtime/scrcpy/AdbWinApi.dll`
-- `runtime/scrcpy/AdbWinUsbApi.dll`
-
-If any required runtime file is missing, build will fail before release.

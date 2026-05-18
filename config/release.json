@@ -1,0 +1,11 @@
+{
+  "version": "1.0.0",
+  "runtimeIdentifier": "win-x64",
+  "requiredRuntimeFiles": [
+    "scrcpy.exe",
+    "adb.exe",
+    "AdbWinApi.dll",
+    "AdbWinUsbApi.dll",
+    "SDL2.dll"
+  ]
+}
