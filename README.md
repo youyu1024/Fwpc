@@ -1,6 +1,6 @@
 # WiFi Phone Control
 
-A Windows desktop project for Android **Wi-Fi pairing + control** with `adb` and `scrcpy`.
+A Windows desktop project for Android **Wi-Fi pairing + control** with built-in `adb` and `scrcpy` runtime in release package.
 
 ## Highlights
 
@@ -16,12 +16,14 @@ A Windows desktop project for Android **Wi-Fi pairing + control** with `adb` and
 
 - PowerShell 5.1+
 - Windows Forms (.NET Framework)
-- `adb` and `scrcpy` (from winget package `Genymobile.scrcpy`)
+- `adb` and `scrcpy` (release zip already bundles official runtime files)
 - Optional: `ps2exe` module (for building EXE)
 
 ## Dependencies
 
-Install `scrcpy` (includes `adb`):
+Release package users do not need to install `scrcpy` or `adb` separately.
+
+If you are developing from source and want local fallback tooling, you can still install via winget:
 
 ```powershell
 winget install Genymobile.scrcpy
@@ -49,12 +51,8 @@ Portable dependency mode (recommended for open-source distribution):
 ## Fresh PC install & run (from GitHub)
 
 1. Download this repository (ZIP) and extract it, e.g. `C:\WiFiPhoneControl`.
-2. Prepare dependencies (choose one):
-   - **Option A (recommended for non-technical users):** provide full scrcpy runtime in `runtime\scrcpy\`.
-   - **Option B:** install with winget:
-     ```powershell
-     winget install Genymobile.scrcpy
-     ```
+2. Prepare runtime files:
+   - Put the **full official scrcpy Windows release package** under `runtime\scrcpy\` before building release.
 3. Build EXE:
    ```powershell
    .\build-release.cmd
@@ -66,7 +64,7 @@ Portable dependency mode (recommended for open-source distribution):
 
 Notes:
 - On some clean Windows systems, install Microsoft Visual C++ Redistributable (x64) if scrcpy cannot start.
-- Keep `dist\core`, `dist\config`, `dist\profiles`, and optional `dist\runtime` together with the exe.
+- Release ZIP (`dist\WiFiPhoneControl-v1.0.0-win-x64.zip`) already includes `WiFiPhoneControl.exe`, `core/`, `config/`, `profiles/`, and `runtime\scrcpy\`; extract and run directly (no winget required).
 
 ## Quick Start
 
@@ -109,3 +107,15 @@ dist\WiFiPhoneControl.exe
 ## License
 
 MIT License. See [LICENSE](LICENSE).
+
+
+## Release Package Validation
+
+`tools/build-release.ps1` now validates the generated ZIP and requires:
+
+- `runtime/scrcpy/scrcpy.exe`
+- `runtime/scrcpy/adb.exe`
+- `runtime/scrcpy/AdbWinApi.dll`
+- `runtime/scrcpy/AdbWinUsbApi.dll`
+
+If any required runtime file is missing, build will fail before release.
