@@ -32,13 +32,6 @@ Fwpc 是面向 Windows 10/11 x64 的 Android 投屏与键鼠控制工具，支�
 
 构建会校验官方 scrcpy ZIP 的 SHA-256，并通过 ps2exe 打包启动器。v1.1.0 的产物为 release\WiFiPhoneControl-v1.1.0-win-x64.zip。验收项目见 [Windows 与 Android 发布检查](docs/release-acceptance.md)。
 
-## 发布 Fwpc v1.1.0
-
-1. 在准备发布的 main 提交上运行回归测试和构建，解压验证 ZIP 能独立启动。
-2. 在 [GitHub Releases](https://github.com/youyu1024/Fwpc/releases) 新建 Release。创建标签 v1.1.0，目标选 main 上对应的已验证提交。标题填写 **Fwpc v1.1.0**。
-3. 附上构建生成的 WiFiPhoneControl-v1.1.0-win-x64.zip。在发行说明中列出 USB 直连、六位码配对与连接恢复、控制中心改版，以及验证情况。
-4. 真机验收尚未完成时，勾选 **This is a pre-release** 后发布。完成真机验收后，再决定是否将该 Release 转为正式发行。
-
 ## 许可证
 
 [MIT](LICENSE)
