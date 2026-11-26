@@ -1,28 +1,27 @@
-Wi-Fi Phone Control - Quick Start
+Fwpc - Quick Start
 
-System requirements:
-- Windows 10/11 x64
-- Android wireless debugging enabled
-- PC and Android device on a reachable network
+Windows 10 or 11 x64
 
-Release usage:
-1) Download WiFiPhoneControl-v1.0.0-win-x64.zip.
-2) Extract the ZIP to a local folder.
-3) Double-click WiFiPhoneControl.exe.
-4) On the Android device, open:
-   Developer options -> Wireless debugging -> Pair device with pairing code
-5) In the app, fill Pair Endpoint and Pair Code.
-6) Click Pair & Connect.
-7) Click Start Control (scrcpy).
+1. Extract the full release ZIP into a local folder.
+2. Open WiFiPhoneControl.exe.
 
-Bundled dependencies:
-- scrcpy 4.0
-- adb 37.0.0
-- Full official scrcpy Windows x64 runtime under runtime\scrcpy
+USB direct
+1. Enable Developer options and USB debugging on the phone.
+2. Connect the phone with a USB data cable.
+3. Select Start USB control. Approve USB debugging on the phone if prompted.
+4. If several phones appear, select the one you want to control.
 
-No separate scrcpy, adb, platform-tools, or winget install is required for release users.
+Wi-Fi (Android 11 or newer)
+1. Connect the phone and PC to a local network where they can reach each other.
+2. On the phone, open Developer options > Wireless debugging.
+3. Select Pair device with pairing code and keep the dialog open.
+4. In Fwpc, select Connect phone. Enter the address and six-digit code from the dialog.
+5. When the phone is connected, select Start control.
 
-Build from source:
-1) Double-click build-release.cmd, or run .\build-release.cmd in PowerShell.
-2) Output: release\WiFiPhoneControl-v1.0.0-win-x64.zip
-3) The build script downloads and verifies scrcpy-win64-v4.0.zip automatically.
+If pairing succeeds but discovery fails, use Enter connection address. Enter the
+current IP address and port from the main Wireless debugging screen on the phone.
+Use Diagnostics for additional details. USB direct is available when the network
+blocks communication between the phone and PC.
+
+The ZIP includes scrcpy 4.0, ADB 37.0.0 and their runtime files. If the app reports
+an incomplete release, extract the full ZIP again.

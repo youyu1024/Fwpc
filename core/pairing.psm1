@@ -1,76 +1,28 @@
-$ErrorActionPreference = "Stop"
-Import-Module (Join-Path $PSScriptRoot "common.psm1")
-
-function Get-MdnsConnectEndpoints {
-  param([Parameter(Mandatory = $true)][string]$AdbPath)
-
-  $lines = & "$AdbPath" mdns services 2>$null
-  if (-not $lines) { return @() }
-
-  $eps = @()
-  foreach ($line in $lines) {
-    if ($line -match "_adb-tls-connect\._tcp\s+(\d+\.\d+\.\d+\.\d+:\d+)") {
-      $eps += $matches[1]
-    }
-  }
-  return $eps | Select-Object -Unique
-}
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'adb.psm1')
 
 function Invoke-DevicePairing {
   param(
-    [Parameter(Mandatory = $true)][string]$PairEndpoint,
-    [Parameter(Mandatory = $true)][string]$PairCode,
-    [string]$ConnectEndpoint
+    [string]$PairEndpoint,
+    [string]$PairCode,
+    [System.Threading.CancellationToken]$Token = [System.Threading.CancellationToken]::None
   )
 
-  $adb = Get-AdbPath
-  $paths = Get-AppPaths
+  $address = ConvertTo-NetworkEndpoint $PairEndpoint
+  if (-not $address) { return [pscustomobject]@{ Status = 'invalid-address' } }
+  if ($PairCode -notmatch '^[0-9]{6}$') { return [pscustomobject]@{ Status = 'invalid-code' } }
 
-  $pairOutput = & "$adb" pair $PairEndpoint $PairCode 2>&1
-  $pairText = ($pairOutput | Out-String).Trim()
-  Write-AppLog -Message "adb pair => $pairText"
-  if ($pairText -notmatch "Successfully paired") {
-    return [pscustomobject]@{
-      Success = $false
-      Message = $pairText
-    }
+  $result = Invoke-Adb -Arguments @('pair', $address) -InputLine $PairCode -Token $Token -TimeoutMs 12000
+  if ($result.ExitCode -eq 0 -and $result.Output -match 'Successfully paired to ') {
+    $identity = if ($result.Output -cmatch '\[guid=([A-Za-z0-9_.-]+)\]') { $Matches[1] } else { '' }
+    return [pscustomobject]@{ Status = 'paired'; Identity = $identity }
   }
-
-  if (-not $ConnectEndpoint) {
-    $mdnsEndpoints = Get-MdnsConnectEndpoints -AdbPath $adb
-    $pairIp = $PairEndpoint.Split(":")[0]
-    $preferred = $mdnsEndpoints | Where-Object { $_ -like "${pairIp}:*" } | Select-Object -First 1
-    if ($preferred) { $ConnectEndpoint = $preferred }
-    elseif ($mdnsEndpoints.Count -gt 0) { $ConnectEndpoint = $mdnsEndpoints[0] }
-  }
-
-  if (-not $ConnectEndpoint) {
-    return [pscustomobject]@{
-      Success = $false
-      Message = "Paired, but connect endpoint is missing."
-    }
-  }
-
-  $connectOutput = & "$adb" connect $ConnectEndpoint 2>&1
-  $connectText = ($connectOutput | Out-String).Trim()
-  Write-AppLog -Message "adb connect $ConnectEndpoint => $connectText"
-  if ($connectText -notmatch "connected to|already connected") {
-    return [pscustomobject]@{
-      Success = $false
-      Message = $connectText
-    }
-  }
-
-  Set-Content -Path $paths.EndpointFile -Value $ConnectEndpoint -Encoding ASCII
-  if ($ConnectEndpoint -match "^(\d+\.\d+\.\d+\.\d+):\d+$") {
-    Set-Content -Path $paths.IpFile -Value $matches[1] -Encoding ASCII
-  }
-
-  return [pscustomobject]@{
-    Success         = $true
-    ConnectEndpoint = $ConnectEndpoint
-    Message         = $connectText
-  }
+  # Keep the one-time code out of the process command line and diagnostic output.
+  $detail = ($result.Output + ' ' + $result.Error).Trim().Replace($PairCode, '[redacted]')
+  $status = if ($detail -match 'refused|unable to connect|failed to connect|unreachable|timed out|No route') {
+    'pair-unreachable'
+  } else { 'pair-failed' }
+  return [pscustomobject]@{ Status = $status; Detail = $detail }
 }
 
-Export-ModuleMember -Function Get-MdnsConnectEndpoints, Invoke-DevicePairing
+Export-ModuleMember -Function Invoke-DevicePairing

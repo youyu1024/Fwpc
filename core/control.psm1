@@ -1,160 +1,229 @@
-$ErrorActionPreference = "Stop"
-Import-Module (Join-Path $PSScriptRoot "common.psm1")
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'common.psm1')
+Import-Module (Join-Path $PSScriptRoot 'adb.psm1')
 
-function Get-UsbDeviceSerial {
-  $adb = Get-AdbPath
-  return (& "$adb" devices | Select-String -Pattern "^[^:\s]+\s+device$" |
-    Where-Object { $_.Line -notmatch ":" } |
-    ForEach-Object { ($_ -split "\s+")[0] } |
-    Select-Object -First 1)
-}
-
-function Get-DeviceWifiIpFromUsb {
-  param([Parameter(Mandatory = $true)][string]$UsbSerial)
-
-  $adb = Get-AdbPath
-  $targetIp = (& "$adb" -s $UsbSerial shell ip -f inet addr show wlan0 |
-    Select-String -Pattern "inet\s+(\d+\.\d+\.\d+\.\d+)" |
-    ForEach-Object { $_.Matches[0].Groups[1].Value } |
-    Select-Object -First 1)
-
-  if (-not $targetIp) {
-    $targetIp = (& "$adb" -s $UsbSerial shell ip route |
-      Select-String -Pattern "src\s+(\d+\.\d+\.\d+\.\d+)" |
-      ForEach-Object { $_.Matches[0].Groups[1].Value } |
-      Select-Object -First 1)
+function New-ConnectionResult {
+  param([string]$Status, $Device, [string]$Address, [string]$Identity, [string]$Detail, [string]$HardwareSerial)
+  [pscustomobject]@{
+    Status = $Status
+    Device = $Device
+    Address = $Address
+    Identity = $Identity
+    HardwareSerial = $HardwareSerial
+    Detail = $Detail
   }
-  return $targetIp
 }
 
-function Initialize-UsbTcpipMode {
-  $paths = Get-AppPaths
-  $adb = Get-AdbPath
-  $usbSerial = Get-UsbDeviceSerial
-  if (-not $usbSerial) { return $null }
-
-  $targetIp = Get-DeviceWifiIpFromUsb -UsbSerial $usbSerial
-  if (-not $targetIp) { return $null }
-
-  & "$adb" -s $usbSerial tcpip 5555 | Out-Null
-  Start-Sleep -Seconds 1
-  $endpoint = "$targetIp`:5555"
-  Set-Content -Path $paths.IpFile -Value $targetIp -Encoding ASCII
-  Set-Content -Path $paths.EndpointFile -Value $endpoint -Encoding ASCII
-  Write-AppLog -Message "USB tcpip enabled for $endpoint"
-  return $endpoint
+function Test-WifiIdentity {
+  param($Device, [string]$Identity)
+  return ($Identity -and $Device.Kind -eq 'wifi' -and
+    $Device.Serial.TrimEnd('.') -ceq "$Identity._adb-tls-connect._tcp")
 }
 
-function Get-SavedEndpoint {
-  $paths = Get-AppPaths
-  if (Test-Path $paths.EndpointFile) {
-    $e = (Get-Content $paths.EndpointFile -ErrorAction SilentlyContinue | Select-Object -First 1).Trim()
-    if ($e) { return $e }
+function Get-HardwareSerial {
+  param($Device, [System.Threading.CancellationToken]$Token)
+  $r = Invoke-Adb -Arguments @('-s', $Device.Serial, 'shell', 'getprop', 'ro.serialno') -Token $Token -TimeoutMs 2500
+  if ($r.ExitCode -eq 0 -and $r.Output -cmatch '^[A-Za-z0-9_.-]+$' -and $r.Output -ne 'unknown') {
+    return $r.Output
   }
-
-  if (Test-Path $paths.IpFile) {
-    $ip = (Get-Content $paths.IpFile -ErrorAction SilentlyContinue | Select-Object -First 1).Trim()
-    if ($ip) { return "$ip`:5555" }
-  }
-  return $null
 }
 
-function Test-EndpointOnline {
-  param([Parameter(Mandatory = $true)][string]$Endpoint)
-  $adb = Get-AdbPath
-  $devices = & "$adb" devices
-  $online = ($devices | Select-String -SimpleMatch "$Endpoint`tdevice")
-  return [bool]$online
-}
+function Resolve-WifiDevice {
+  param(
+    [string]$Identity,
+    [string]$Address,
+    [string]$HardwareSerial,
+    [switch]$ExplicitAddress,
+    [switch]$WaitForDiscovery,
+    [System.Threading.CancellationToken]$Token = [System.Threading.CancellationToken]::None
+  )
 
-function Connect-DeviceEndpoint {
-  param([Parameter(Mandatory = $true)][string]$Endpoint)
-  $paths = Get-AppPaths
-  $adb = Get-AdbPath
-  $connectOutput = & "$adb" connect $Endpoint 2>&1
-  $connectText = ($connectOutput | Out-String).Trim()
-  Write-AppLog -Message "adb connect $Endpoint => $connectText"
-  if ($connectText -match "connected to|already connected") {
-    Set-Content -Path $paths.EndpointFile -Value $Endpoint -Encoding ASCII
-    if ($Endpoint -match "^(\d+\.\d+\.\d+\.\d+):\d+$") {
-      Set-Content -Path $paths.IpFile -Value $matches[1] -Encoding ASCII
+  $endpoint = ConvertTo-NetworkEndpoint $Address
+  if ($ExplicitAddress -and -not $endpoint) { return (New-ConnectionResult 'invalid-address') }
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  do {
+    $devices = @(Get-AdbDevices -Token $Token)
+    $candidates = if ($ExplicitAddress) { @() } else { @($devices | Where-Object { Test-WifiIdentity $_ $Identity }) }
+    $candidates = @($candidates | Where-Object { $_ })
+    if ($candidates.Count -eq 1 -and $candidates[0].State -in @('unauthorized', 'authorizing')) {
+      if ($candidates[0].State -eq 'unauthorized') { return (New-ConnectionResult 'pairing-required' -Identity $Identity) }
     }
-    return [pscustomobject]@{ Success = $true; Message = $connectText }
-  }
-  return [pscustomobject]@{ Success = $false; Message = $connectText }
+    if ($candidates.Count -eq 1 -and $candidates[0].State -eq 'device') {
+      $serial = Get-HardwareSerial -Device $candidates[0] -Token $Token
+      if ($HardwareSerial -and $serial -cne $HardwareSerial) { return (New-ConnectionResult 'device-mismatch') }
+      return (New-ConnectionResult 'connected' -Device $candidates[0] -Address $endpoint -Identity $Identity -HardwareSerial $serial)
+    }
+
+    $destination = $null
+    if ($ExplicitAddress) {
+      $destination = $endpoint
+    }
+    elseif ($Identity) {
+      $discovered = @(Get-AdbWifiServices -Token $Token | Where-Object { $_.Id -ceq $Identity } |
+          Select-Object -ExpandProperty Address -Unique)
+      if ($discovered.Count -eq 1) { $destination = $discovered[0] }
+    }
+    if ($destination) {
+      $detail = ''
+      $match = @($devices | Where-Object { $_.Kind -eq 'wifi' -and $_.Serial -ceq $destination })
+      if ($match.Count -ne 1 -or $match[0].State -ne 'device') {
+        $connection = Invoke-Adb -Arguments @('connect', $destination) -Token $Token
+        $detail = ($connection.Output + ' ' + $connection.Error).Trim()
+        if ($detail -match 'failed to authenticate|authentication failed|not authenticated|unauthorized') {
+          return (New-ConnectionResult 'pairing-required' -Identity $Identity -Detail $detail)
+        }
+        $devices = @(Get-AdbDevices -Token $Token)
+        $match = @($devices | Where-Object { $_.Kind -eq 'wifi' -and $_.Serial -ceq $destination -and $_.State -eq 'device' })
+        if ($match.Count -eq 0 -and -not $ExplicitAddress) {
+          $match = @($devices | Where-Object { (Test-WifiIdentity $_ $Identity) -and $_.State -eq 'device' })
+        }
+      }
+      if ($match.Count -eq 1 -and $match[0].State -eq 'device') {
+        $serial = Get-HardwareSerial -Device $match[0] -Token $Token
+        if ($HardwareSerial -and $serial -cne $HardwareSerial) { return (New-ConnectionResult 'device-mismatch') }
+        return (New-ConnectionResult 'connected' -Device $match[0] -Address $destination -Identity $Identity -HardwareSerial $serial)
+      }
+      if ($ExplicitAddress) { return (New-ConnectionResult 'network-unreachable' -Detail $detail) }
+    }
+
+    if (-not $WaitForDiscovery -or [DateTime]::UtcNow -ge $deadline) { break }
+    if ($Token.WaitHandle.WaitOne(400)) { $Token.ThrowIfCancellationRequested() }
+  } while ($true)
+  return (New-ConnectionResult 'address-needed' -Identity $Identity)
 }
 
-function Invoke-DeviceConnection {
-  param([string]$PreferredEndpoint)
+function Get-UsbDevices {
+  param([System.Threading.CancellationToken]$Token)
+  $devices = @(Get-AdbDevices -Token $Token)
+  $devices | Where-Object { $_.Kind -eq 'usb' }
+  # ADB's libusb backend may omit the bus path. Ask ADB to identify a sole USB transport.
+  if ($devices.Kind -notcontains 'usb' -and $devices.Kind -contains 'unknown') {
+    $only = Invoke-Adb -Arguments @('-d', 'get-serialno') -Token $Token
+    if ($only.ExitCode -eq 0) {
+      foreach ($device in ($devices | Where-Object { $_.Kind -eq 'unknown' -and $_.Serial -ceq $only.Output })) {
+        $device.Kind = 'usb'
+        $device
+      }
+    }
+  }
+}
 
-  $endpoint = $PreferredEndpoint
-  if (-not $endpoint) { $endpoint = Initialize-UsbTcpipMode }
-  if (-not $endpoint) { $endpoint = Get-SavedEndpoint }
-  if (-not $endpoint) {
-    return [pscustomobject]@{ Success = $false; Endpoint = $null; Message = "No endpoint found." }
+function Resolve-UsbDevice {
+  param([string]$Serial, [System.Threading.CancellationToken]$Token, [int]$AuthorizationSeconds = 25)
+  $devices = @(Get-UsbDevices -Token $Token)
+  if ($Serial) { $devices = @($devices | Where-Object { $_.Serial -ceq $Serial }) }
+  if ($devices.Count -eq 0) { return (New-ConnectionResult 'usb-missing') }
+  if ($devices.Count -gt 1) {
+    return [pscustomobject]@{ Status = 'choose-usb'; Devices = $devices }
   }
 
-  if (Test-EndpointOnline -Endpoint $endpoint) {
-    return [pscustomobject]@{ Success = $true; Endpoint = $endpoint; Message = "Already online." }
+  $device = $devices[0]
+  $deadline = [DateTime]::UtcNow.AddSeconds($AuthorizationSeconds)
+  while ($device.State -in @('unauthorized', 'authorizing', 'connecting') -and [DateTime]::UtcNow -lt $deadline) {
+    if ($Token.WaitHandle.WaitOne(450)) { $Token.ThrowIfCancellationRequested() }
+    $device = Get-UsbDevices -Token $Token | Where-Object { $_.Serial -ceq $devices[0].Serial } | Select-Object -First 1
+    if (-not $device) { return (New-ConnectionResult 'usb-missing' -Device $devices[0]) }
   }
+  if ($device.State -eq 'device') { return (New-ConnectionResult 'connected' -Device $device) }
+  if ($device.State -in @('unauthorized', 'authorizing')) { return (New-ConnectionResult 'usb-authorization' -Device $device) }
+  return (New-ConnectionResult 'usb-offline' -Device $device)
+}
 
-  $result = Connect-DeviceEndpoint -Endpoint $endpoint
-  if ($result.Success -and (Test-EndpointOnline -Endpoint $endpoint)) {
-    return [pscustomobject]@{ Success = $true; Endpoint = $endpoint; Message = $result.Message }
-  }
-  return [pscustomobject]@{ Success = $false; Endpoint = $endpoint; Message = $result.Message }
+function Get-SelectedDevice {
+  param($Device, [string]$HardwareSerial, [System.Threading.CancellationToken]$Token)
+  $available = if ($Device.Kind -eq 'usb') { Get-UsbDevices -Token $Token } else { Get-AdbDevices -Token $Token }
+  $devices = @($available | Where-Object { $_.Serial -ceq $Device.Serial -and $_.State -eq 'device' -and $_.Kind -eq $Device.Kind })
+  if ($devices.Count -ne 1) { return }
+  if ($HardwareSerial -and (Get-HardwareSerial -Device $devices[0] -Token $Token) -cne $HardwareSerial) { return }
+  return $devices[0]
 }
 
 function Start-ScrcpyControl {
   param(
-    [Parameter(Mandatory = $true)][string]$Endpoint,
-    [string]$Bitrate = "6M",
+    [Parameter(Mandatory)]$Device,
+    [string]$HardwareSerial,
+    [string]$Bitrate = '6M',
     [int]$MaxFps = 30,
-    [int]$MaxSize = 1280
+    [int]$MaxSize = 1280,
+    [hashtable]$Options = @{},
+    [System.Threading.CancellationToken]$Token = [System.Threading.CancellationToken]::None
   )
-
-  $paths = Get-AppPaths
-  $scrcpy = Get-ScrcpyPath
-  $outLog = Join-Path $paths.Logs "scrcpy-out.log"
-  $errLog = Join-Path $paths.Logs "scrcpy-err.log"
-  $argList = @(
-    "--serial", $Endpoint,
-    "--window-title", "Android-$Endpoint",
-    "--video-bit-rate", $Bitrate,
-    "--max-fps", $MaxFps,
-    "--max-size", $MaxSize,
-    "--no-audio"
-  )
-  Write-AppLog -Message "scrcpy launch for $Endpoint"
-  $proc = Start-Process -FilePath $scrcpy -ArgumentList $argList -PassThru -RedirectStandardOutput $outLog -RedirectStandardError $errLog
-  Start-Sleep -Milliseconds 1200
-  if ($proc.HasExited) {
-    $err = ""
-    if (Test-Path $errLog) {
-      $err = (Get-Content -Path $errLog -Raw -ErrorAction SilentlyContinue).Trim()
-    }
-    if (-not $err -and (Test-Path $outLog)) {
-      $err = (Get-Content -Path $outLog -Raw -ErrorAction SilentlyContinue).Trim()
-    }
-    if (-not $err) {
-      $err = "scrcpy exited immediately (ExitCode=$($proc.ExitCode))."
-    }
-    Write-AppLog -Message "scrcpy failed: $err" -Level "ERROR"
-    return [pscustomobject]@{
-      Success = $false
-      Message = $err
-      Process = $null
-    }
+  $Token.ThrowIfCancellationRequested()
+  if ($Device.Serial -notmatch '^[A-Za-z0-9_.:%\[\]-]+$' -or $Bitrate -notmatch '^[1-9][0-9]{0,8}[KM]?$') {
+    return [pscustomobject]@{ Status = 'control-failed'; Detail = 'Invalid device serial or video bitrate.' }
   }
-
-  return [pscustomobject]@{
-    Success = $true
-    Message = "scrcpy started (PID=$($proc.Id))."
-    Process = $proc
+  $selected = Get-SelectedDevice -Device $Device -HardwareSerial $HardwareSerial -Token $Token
+  if (-not $selected) {
+    return [pscustomobject]@{ Status = 'control-failed'; Detail = 'The selected ADB device is no longer ready or could not be verified.' }
+  }
+  $Token.ThrowIfCancellationRequested()
+  $paths = Get-AppPaths
+  $logId = [Guid]::NewGuid().ToString('N')
+  $outLog = Join-Path $paths.Logs "scrcpy-$logId.out.log"
+  $errLog = Join-Path $paths.Logs "scrcpy-$logId.err.log"
+  $arguments = @('--serial', $Device.Serial, '--video-bit-rate', $Bitrate, '--max-fps', $MaxFps,
+    '--max-size', $MaxSize)
+  $flags = [ordered]@{
+    noAudio = '--no-audio'; turnScreenOff = '--turn-screen-off'; stayAwake = '--stay-awake'
+    alwaysOnTop = '--always-on-top'; fullscreen = '--fullscreen'; showTouches = '--show-touches'
+  }
+  foreach ($key in $flags.Keys) {
+    if ($Options[$key]) { $arguments += $flags[$key] }
+  }
+  $scrcpy = Get-ScrcpyPath
+  $process = Start-Process -FilePath $scrcpy -WorkingDirectory (Split-Path $scrcpy) -ArgumentList $arguments -PassThru -NoNewWindow -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+  try {
+    if ($Token.WaitHandle.WaitOne(900)) { $Token.ThrowIfCancellationRequested() }
+    if ($process.HasExited) {
+      $detail = Get-Content -LiteralPath $errLog -Raw
+      $exitCode = $process.ExitCode
+      $process.Dispose()
+      if (-not $detail) { $detail = "scrcpy exited (code $exitCode)." }
+      return [pscustomobject]@{ Status = 'control-failed'; Detail = $detail }
+    }
+    return [pscustomobject]@{ Status = 'controlling'; Device = $Device; Process = $process; ErrorLog = $errLog }
+  }
+  catch {
+    if (-not $process.HasExited) { $process.Kill() }
+    $process.Dispose()
+    throw
   }
 }
 
-Export-ModuleMember -Function `
-  Get-UsbDeviceSerial, Get-DeviceWifiIpFromUsb, Initialize-UsbTcpipMode, `
-  Get-SavedEndpoint, Test-EndpointOnline, Connect-DeviceEndpoint, `
-  Invoke-DeviceConnection, Start-ScrcpyControl
+function Invoke-PhoneAction {
+  param($Device, [string]$HardwareSerial, [int]$KeyCode, [System.Threading.CancellationToken]$Token)
+
+  $selected = Get-SelectedDevice -Device $Device -HardwareSerial $HardwareSerial -Token $Token
+  if (-not $selected) { return [pscustomobject]@{ Status = 'action-failed'; Detail = 'The selected device is no longer available.' } }
+
+  if ($KeyCode -in @(3, 4, 24, 25, 26, 187)) {
+    $result = Invoke-Adb -Arguments @('-s', $selected.Serial, 'shell', 'input', 'keyevent', [string]$KeyCode) -Token $Token
+    if ($result.ExitCode -ne 0) { return [pscustomobject]@{ Status = 'action-failed'; Detail = $result.Error } }
+    return [pscustomobject]@{ Status = 'action-complete' }
+  }
+  if ($KeyCode -ne -1) { return [pscustomobject]@{ Status = 'action-failed'; Detail = 'Unknown phone action.' } }
+
+  $paths = Get-AppPaths
+  $name = 'screenshot-{0}-{1}.png' -f (Get-Date -Format 'yyyyMMdd-HHmmss'), [Guid]::NewGuid().ToString('N').Substring(0, 8)
+  $destination = Join-Path $paths.Logs $name
+  $temporary = "$destination.tmp"
+  try {
+    $result = Invoke-Adb -Arguments @('-s', $selected.Serial, 'exec-out', 'screencap', '-p') -OutputPath $temporary -TimeoutMs 8000 -Token $Token
+    if ($result.ExitCode -ne 0) { return [pscustomobject]@{ Status = 'action-failed'; Detail = $result.Error } }
+    $stream = [IO.File]::OpenRead($temporary)
+    try {
+      $header = New-Object byte[] 8
+      $count = $stream.Read($header, 0, $header.Length)
+    } finally { $stream.Dispose() }
+    if ($count -ne 8 -or [BitConverter]::ToString($header) -ne '89-50-4E-47-0D-0A-1A-0A') {
+      return [pscustomobject]@{ Status = 'action-failed'; Detail = 'The phone did not return a valid PNG screenshot.' }
+    }
+    $Token.ThrowIfCancellationRequested()
+    [IO.File]::Move($temporary, $destination)
+    return [pscustomobject]@{ Status = 'action-complete'; Path = $destination; Detail = "Saved screenshot to $destination" }
+  } finally {
+    if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
+  }
+}
+
+Export-ModuleMember -Function Resolve-WifiDevice, Resolve-UsbDevice, Start-ScrcpyControl, Invoke-PhoneAction

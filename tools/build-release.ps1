@@ -1,28 +1,34 @@
 param(
-  [string]$AppVersion = "1.0.0",
+  [string]$AppVersion = "1.1.0",
   [string]$ScrcpyVersion = "4.0",
   [string]$ScrcpySha256 = "75dbeb5b00e6f64292f26f70900ae55ca397786bdfb0b9bbeb481a0549047457"
 )
 
 $ErrorActionPreference = "Stop"
+$windowsModules = Join-Path $PSHOME 'Modules'
+$env:PSModulePath = $windowsModules + [IO.Path]::PathSeparator + $env:PSModulePath
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $source = Join-Path $root "app\wifi-phone-control-gui.ps1"
-$dist = Join-Path $root "dist"
+
 $release = Join-Path $root "release"
-$target = Join-Path $dist "WiFiPhoneControl.exe"
+
 $cache = Join-Path $root ".cache"
 $downloadCache = Join-Path $cache "downloads"
 $scrcpyAssetName = "scrcpy-win64-v$ScrcpyVersion.zip"
 $scrcpyUrl = "https://github.com/Genymobile/scrcpy/releases/download/v$ScrcpyVersion/$scrcpyAssetName"
 $scrcpyZip = Join-Path $downloadCache $scrcpyAssetName
-$scrcpyExtractRoot = Join-Path $cache "scrcpy-v$ScrcpyVersion"
+
 $packageName = "WiFiPhoneControl-v$AppVersion-win-x64.zip"
 $packagePath = Join-Path $release $packageName
-$tempPackageRoot = Join-Path $dist "_release-package"
+$buildRoot = Join-Path $cache ("build-" + [Guid]::NewGuid().ToString('N'))
+$scrcpyExtractRoot = Join-Path $buildRoot "runtime"
+$tempPackageRoot = Join-Path $buildRoot "package"
+$target = Join-Path $tempPackageRoot "WiFiPhoneControl.exe"
+$stagedZip = Join-Path $buildRoot $packageName
 
 function Ensure-Directory {
   param([Parameter(Mandatory = $true)][string]$Path)
@@ -30,15 +36,6 @@ function Ensure-Directory {
   if (-not (Test-Path $Path)) {
     New-Item -Path $Path -ItemType Directory | Out-Null
   }
-}
-
-function Reset-Directory {
-  param([Parameter(Mandatory = $true)][string]$Path)
-
-  if (Test-Path $Path) {
-    Remove-Item -Path $Path -Recurse -Force
-  }
-  New-Item -Path $Path -ItemType Directory | Out-Null
 }
 
 function Assert-Sha256 {
@@ -100,7 +97,7 @@ if (-not (Test-Path $source)) {
   throw "Source file not found: $source"
 }
 
-Ensure-Directory -Path $dist
+Ensure-Directory -Path $tempPackageRoot
 Ensure-Directory -Path $release
 Ensure-Directory -Path $downloadCache
 
@@ -110,13 +107,22 @@ if (-not (Test-Path $scrcpyZip)) {
 }
 
 Assert-Sha256 -Path $scrcpyZip -Expected $ScrcpySha256
-Reset-Directory -Path $scrcpyExtractRoot
+Ensure-Directory -Path $scrcpyExtractRoot
 Expand-Archive -Path $scrcpyZip -DestinationPath $scrcpyExtractRoot -Force
 $scrcpyPackageRoot = Get-ScrcpyExtractedRoot -ExtractRoot $scrcpyExtractRoot
 Assert-RuntimeComplete -RuntimeRoot $scrcpyPackageRoot
 
 if (-not (Get-Module -ListAvailable -Name ps2exe)) {
+  $modernModules = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'PowerShell\Modules'
+  if (Test-Path -LiteralPath (Join-Path $modernModules 'ps2exe')) {
+    $env:PSModulePath += [IO.Path]::PathSeparator + $modernModules
+  }
+}
+if (-not (Get-Module -ListAvailable -Name ps2exe)) {
   Write-Host "Installing ps2exe module..." -ForegroundColor Cyan
+  if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+    Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ForceBootstrap | Out-Null
+  }
   Install-Module -Name ps2exe -Scope CurrentUser -Force -AllowClobber
 }
 
@@ -126,15 +132,17 @@ Invoke-ps2exe `
   -inputFile $source `
   -outputFile $target `
   -noConsole `
-  -title "Wi-Fi Phone Control" `
+  -x64 `
+  -STA `
+  -DPIAware `
+  -title "Fwpc Phone Control" `
   -company "Local Build" `
   -product "WiFiPhoneControl" `
   -version $AppVersion
 
-Reset-Directory -Path $tempPackageRoot
 
-Copy-Item -Path $target -Destination (Join-Path $tempPackageRoot "WiFiPhoneControl.exe") -Force
-foreach ($folder in @("core", "config", "profiles")) {
+
+foreach ($folder in @("core", "config", "profiles", "docs")) {
   Copy-Item -Path (Join-Path $root $folder) -Destination (Join-Path $tempPackageRoot $folder) -Recurse -Force
 }
 foreach ($file in @("QUICKSTART.txt", "LICENSE")) {
@@ -146,12 +154,9 @@ Ensure-Directory -Path $runtimeTarget
 Copy-Item -Path (Join-Path $scrcpyPackageRoot "*") -Destination $runtimeTarget -Recurse -Force
 Assert-RuntimeComplete -RuntimeRoot $runtimeTarget
 
-if (Test-Path $packagePath) {
-  Remove-Item -Path $packagePath -Force
-}
-Compress-Archive -Path (Join-Path $tempPackageRoot "*") -DestinationPath $packagePath -CompressionLevel Optimal
+Compress-Archive -Path (Join-Path $tempPackageRoot "*") -DestinationPath $stagedZip -CompressionLevel Optimal
 
-$zip = [System.IO.Compression.ZipFile]::OpenRead($packagePath)
+$zip = [System.IO.Compression.ZipFile]::OpenRead($stagedZip)
 try {
   $zipEntries = $zip.Entries | ForEach-Object { $_.FullName }
 }
@@ -164,6 +169,11 @@ foreach ($requiredEntry in @(
   "QUICKSTART.txt",
   "LICENSE",
   "core/common.psm1",
+  "core/adb.psm1",
+  "core/pairing.psm1",
+  "core/control.psm1",
+  "core/monitor.psm1",
+  "docs/release-acceptance.md",
   "config/settings.json",
   "profiles/devices.json",
   "runtime/scrcpy/scrcpy.exe",
@@ -180,7 +190,15 @@ foreach ($requiredEntry in @(
   Assert-ZipEntry -Entries $zipEntries -Pattern $requiredEntry
 }
 
-Remove-Item -Path $tempPackageRoot -Recurse -Force
+if ([IO.File]::Exists($packagePath)) { [IO.File]::Replace($stagedZip, $packagePath, [NullString]::Value) }
+else { [IO.File]::Move($stagedZip, $packagePath) }
 
-Write-Host "Build complete: $target" -ForegroundColor Green
+$resolvedBuild = (Resolve-Path -LiteralPath $buildRoot).ProviderPath
+$expectedBuild = [IO.Path]::GetFullPath($buildRoot)
+$item = Get-Item -LiteralPath $resolvedBuild -Force
+if ($resolvedBuild -ne $expectedBuild -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+  throw "Unexpected release staging directory: $resolvedBuild"
+}
+Remove-Item -LiteralPath $resolvedBuild -Recurse -Force
+
 Write-Host "Release package: $packagePath" -ForegroundColor Green

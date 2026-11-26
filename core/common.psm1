@@ -22,7 +22,7 @@ function Get-AppPaths {
 
   foreach ($k in @("Config", "Profiles", "Logs", "State")) {
     if (-not (Test-Path $paths[$k])) {
-      New-Item -Path $paths[$k] -ItemType Directory | Out-Null
+      New-Item -Path $paths[$k] -ItemType Directory -Force | Out-Null
     }
   }
   return $paths
@@ -52,7 +52,13 @@ function Write-JsonFile {
   )
 
   $json = $Value | ConvertTo-Json -Depth 8
-  Set-Content -Path $Path -Value $json -Encoding UTF8
+  $temporary = '{0}.{1}.tmp' -f $Path, [Guid]::NewGuid().ToString('N')
+  try {
+    [IO.File]::WriteAllText($temporary, $json + [Environment]::NewLine, [Text.UTF8Encoding]::new($true))
+    if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporary, $Path, [NullString]::Value) }
+    else { [IO.File]::Move($temporary, $Path) }
+  }
+  finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
 }
 
 function Test-FilePattern {

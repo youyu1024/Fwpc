@@ -1,85 +1,44 @@
-# WiFi Phone Control
+# Fwpc
 
-Windows desktop app for Android Wi-Fi pairing, reconnect monitoring, and scrcpy control.
+Fwpc 是面向 Windows 10/11 x64 的 Android 投屏与键鼠控制工具，支持 USB 有线直连和 Wi-Fi 六位码配对。
 
-## Release Usage
+## 下载和使用
 
-For normal users, use the release ZIP:
+从 [GitHub Releases](https://github.com/youyu1024/Fwpc/releases) 下载 Windows x64 发布包。完整解压后，双击 WiFiPhoneControl.exe。发布包内置 scrcpy 4.0 和 ADB 37.0.0，无需额外安装。
 
-1. Download `WiFiPhoneControl-v1.0.0-win-x64.zip`.
-2. Extract the ZIP to any local folder, for example `C:\WiFiPhoneControl`.
-3. Double-click `WiFiPhoneControl.exe`.
-4. On the Android device, enable Developer options -> Wireless debugging -> Pair device with pairing code.
-5. Enter the pair endpoint and pair code in the app, then click **Pair & Connect**.
-6. Click **Start Control (scrcpy)**.
+### USB 一键直连
 
-The release ZIP bundles the official scrcpy Windows x64 runtime, including `scrcpy.exe`, `adb.exe`, required DLLs, and `scrcpy-server`. Release users do not need `winget`, a separate Android platform-tools install, or a separate scrcpy install.
+1. 在手机的开发者选项中开启 **USB 调试**，用支持数据传输的线缆连接电脑。
+2. 在控制中心点击 **USB 一键直连**。首次连接时解锁手机，并在手机上允许 USB 调试。
+3. 如果同时插入多台手机，先选择目标手机，再开始控制。USB 直连在手机关闭 Wi-Fi 时也可使用。
 
-## System Requirements
+### Wi-Fi 六位码配对（Android 11 及以上）
 
-- Windows 10/11 x64
-- Android device with wireless debugging enabled
-- Host PC and Android device on a reachable network
+1. 让手机与电脑接入可以互通的局域网。在手机的开发者选项中开启 **无线调试**。
+2. 在手机上选择 **使用配对码配对设备**，保持配对弹窗开启。
+3. 在电脑上点击 **连接手机**，输入弹窗中的 IP 地址、端口和六位配对码。
+4. 连接成功后点击 **开始控制**。
 
-Windows security prompts, firewall prompts, and Android wireless debugging authorization prompts are still controlled by the local environment.
+配对已成功但未找到设备时，选择 **手动输入连接地址**，填写手机**无线调试主页面**上的当前 IP 地址和端口。访客网络或路由器的设备隔离可能阻止手机与电脑互通。可在 **诊断** 中查看失败详情，或暂时改用 USB 直连。
 
-## Bundled Runtime
+控制中心提供灭屏、保持唤醒、窗口置顶、全屏、触摸显示和音频选项。控制期间还可操作返回、主页、音量和截屏。
 
-The release build pins:
+## 构建和验证
 
-- scrcpy: `4.0`
-- adb/platform-tools: `37.0.0` as bundled by scrcpy 4.0
-- Windows x64 asset: `scrcpy-win64-v4.0.zip`
-- SHA256: `75dbeb5b00e6f64292f26f70900ae55ca397786bdfb0b9bbeb481a0549047457`
+在 Windows PowerShell 中切换到仓库根目录，依次执行以下命令。
 
-The app only uses `runtime\scrcpy` from the extracted release package. If the runtime folder or required files are missing, the app reports an incomplete release package and does not install dependencies online.
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\connection.tests.ps1
+    .\build-release.cmd
 
-## Build Release
+构建会校验官方 scrcpy ZIP 的 SHA-256，并通过 ps2exe 打包启动器。v1.1.0 的产物为 release\WiFiPhoneControl-v1.1.0-win-x64.zip。验收项目见 [Windows 与 Android 发布检查](docs/release-acceptance.md)。
 
-Build from source on Windows:
+## 发布 Fwpc v1.1.0
 
-```powershell
-.\build-release.cmd
-```
+1. 在准备发布的 main 提交上运行回归测试和构建，解压验证 ZIP 能独立启动。
+2. 在 [GitHub Releases](https://github.com/youyu1024/Fwpc/releases) 新建 Release。创建标签 v1.1.0，目标选 main 上对应的已验证提交。标题填写 **Fwpc v1.1.0**。
+3. 附上构建生成的 WiFiPhoneControl-v1.1.0-win-x64.zip。在发行说明中列出 USB 直连、六位码配对与连接恢复、控制中心改版，以及验证情况。
+4. 真机验收尚未完成时，勾选 **This is a pre-release** 后发布。完成真机验收后，再决定是否将该 Release 转为正式发行。
 
-The build script:
+## 许可证
 
-- Downloads the pinned official scrcpy Windows x64 ZIP if it is not already cached.
-- Verifies the SHA256 hash before using it.
-- Builds `dist\WiFiPhoneControl.exe` with `ps2exe`.
-- Creates `release\WiFiPhoneControl-v1.0.0-win-x64.zip`.
-- Validates that the release ZIP contains the app, config, profiles, docs, and complete `runtime\scrcpy`.
-
-Build dependency:
-
-```powershell
-Install-Module -Name ps2exe -Scope CurrentUser -Force -AllowClobber
-```
-
-If `ps2exe` is missing, the build script attempts to install it for the current user.
-
-## Project Structure
-
-```text
-app/        GUI entry script
-core/       reusable modules
-config/     default settings
-profiles/   default device profiles
-runtime/    runtime notes; release builds populate runtime/scrcpy
-tools/      build scripts
-docs/       release acceptance checklist
-```
-
-## Release Gate
-
-Before publishing any `WiFiPhoneControl-vX.Y.Z-win-x64.zip`, complete the checklist in `docs/release-acceptance.md`.
-
-Release notes must include:
-
-- System requirements: Windows 10/11 x64
-- Bundled dependency versions: scrcpy 4.0 and adb 37.0.0
-- Verification statement for a fresh/offline Windows acceptance environment
-
-## License
-
-MIT License. See [LICENSE](LICENSE).
+[MIT](LICENSE)

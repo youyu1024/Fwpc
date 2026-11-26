@@ -1,729 +1,1127 @@
-﻿$ErrorActionPreference = "Stop"
-
+﻿$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction Stop } catch {}
+[Windows.Forms.Application]::EnableVisualStyles()
 
 function Resolve-AppRoot {
   $candidates = @()
-
-  if ($PSScriptRoot) {
-    $candidates += (Join-Path $PSScriptRoot "..")
-  }
-
-  $exePath = [Environment]::GetCommandLineArgs()[0]
-  if ($exePath) {
-    $candidates += (Split-Path -Parent $exePath)
-  }
-
+  if ($PSScriptRoot) { $candidates += (Join-Path $PSScriptRoot '..') }
+  $candidates += (Split-Path -Parent ([Environment]::GetCommandLineArgs()[0]))
   $candidates += (Get-Location).Path
-
   foreach ($candidate in $candidates) {
-    if (-not $candidate) { continue }
-    $resolved = $null
-    try { $resolved = (Resolve-Path $candidate -ErrorAction Stop).Path } catch { continue }
-    if (Test-Path (Join-Path $resolved "core\common.psm1")) {
-      return $resolved
+    if ($candidate -and (Test-Path (Join-Path $candidate 'core\common.psm1'))) {
+      return (Resolve-Path -LiteralPath $candidate).Path
     }
   }
-
-  throw "Cannot locate app root. core\common.psm1 not found."
+  throw 'Cannot locate the app folder. Extract the full release ZIP.'
 }
 
 $appRoot = Resolve-AppRoot
-Set-Location $appRoot
-
-Import-Module (Join-Path $appRoot "core\common.psm1")
-Import-Module (Join-Path $appRoot "core\pairing.psm1")
-Import-Module (Join-Path $appRoot "core\control.psm1")
-Import-Module (Join-Path $appRoot "core\monitor.psm1")
-
+Import-Module (Join-Path $appRoot 'core\common.psm1')
 $paths = Get-AppPaths
-
-$i18n = @{
-  "zh-CN" = @{
-    app_title = "Wi-Fi 手机控制台"
-    top_title = "Android Wi-Fi 控制中心"
-    language = "语言"
-    theme = "主题"
-    profile = "设备配置"
-    profile_name = "配置名"
-    save_profile = "保存配置"
-    delete_profile = "删除配置"
-    status = "状态"
-    endpoint = "连接端点"
-    monitor = "启用自动重连监控"
-    tab_pair = "配对"
-    tab_control = "控制"
-    tab_settings = "设置"
-    tab_logs = "日志"
-    tab_about = "关于"
-    pair_endpoint = "配对端点 (IP:PORT)"
-    pair_code = "配对码 (6位)"
-    connect_endpoint = "连接端点"
-    btn_pair = "配对并连接"
-    btn_connect = "确保已连接"
-    btn_control = "启动控制 (scrcpy)"
-    bitrate = "码率"
-    fps = "帧率"
-    max_size = "最大分辨率"
-    monitor_interval = "监控间隔(秒)"
-    save_settings = "保存设置"
-    clear_logs = "清空面板"
-    open_logs = "打开日志目录"
-    about_text = "用于 Android 设备 Wi-Fi 配对、自动重连与 scrcpy 控制。"
-    msg_profile_saved = "配置已保存"
-    msg_profile_deleted = "配置已删除"
-    msg_settings_saved = "设置已保存"
-    msg_input_required = "请填写配对端点和配对码。"
-    msg_pairing = "正在配对设备..."
-    msg_connecting = "正在确保连接..."
-    msg_cannot_delete_default = "默认配置 default 不可删除。"
-    state_connected = "已连接"
-    state_reconnecting = "重连中"
-    state_disconnected = "未连接"
-    state_pairing_required = "需要重新配对"
-    msg_runtime_missing = "Release 包不完整：runtime\scrcpy 缺少必需文件。"
-    msg_runtime_fix_guide = "修复指引：请重新下载并完整解压 release zip，或重新构建 release 包。解压即用版本不会自动联网安装依赖。"
-  }
-  "en-US" = @{
-    app_title = "Wi-Fi Phone Control"
-    top_title = "Android Wi-Fi Control Center"
-    language = "Language"
-    theme = "Theme"
-    profile = "Profile"
-    profile_name = "Profile Name"
-    save_profile = "Save Profile"
-    delete_profile = "Delete Profile"
-    status = "Status"
-    endpoint = "Endpoint"
-    monitor = "Enable auto reconnect monitor"
-    tab_pair = "Pairing"
-    tab_control = "Control"
-    tab_settings = "Settings"
-    tab_logs = "Logs"
-    tab_about = "About"
-    pair_endpoint = "Pair Endpoint (IP:PORT)"
-    pair_code = "Pair Code (6-digit)"
-    connect_endpoint = "Connect Endpoint"
-    btn_pair = "Pair & Connect"
-    btn_connect = "Ensure Connected"
-    btn_control = "Start Control (scrcpy)"
-    bitrate = "Bitrate"
-    fps = "FPS"
-    max_size = "Max Size"
-    monitor_interval = "Monitor Interval (sec)"
-    save_settings = "Save Settings"
-    clear_logs = "Clear Panel"
-    open_logs = "Open Log Folder"
-    about_text = "Android Wi-Fi pairing, auto reconnect, and scrcpy control."
-    msg_profile_saved = "Profile saved"
-    msg_profile_deleted = "Profile deleted"
-    msg_settings_saved = "Settings saved"
-    msg_input_required = "Pair endpoint and pair code are required."
-    msg_pairing = "Pairing device..."
-    msg_connecting = "Ensuring connectivity..."
-    msg_cannot_delete_default = "Default profile cannot be deleted."
-    state_connected = "Connected"
-    state_reconnecting = "Reconnecting"
-    state_disconnected = "Disconnected"
-    state_pairing_required = "Pairing Required"
-    msg_runtime_missing = "Release package is incomplete: runtime\scrcpy is missing required files."
-    msg_runtime_fix_guide = "Fix guide: download and extract the release zip again, or rebuild the release package. The portable release does not install dependencies online."
+$defaults = [pscustomobject]@{
+  monitorIntervalSec = 8; bitrate = '6M'; maxFps = 30; maxSize = 1280; language = 'zh-CN'; theme = 'light'; autoReconnect = $true
+  turnScreenOff = $false; stayAwake = $true; alwaysOnTop = $false; fullscreen = $false; showTouches = $false; noAudio = $false
+}
+$settings = Read-JsonFile -Path $paths.SettingsFile -DefaultValue $defaults.PSObject.Copy()
+foreach ($property in $defaults.PSObject.Properties) {
+  if (-not $settings.PSObject.Properties[$property.Name]) {
+    $settings | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value
   }
 }
+if ($settings.language -notin @('zh-CN', 'en-US')) { $settings.language = 'zh-CN' }
+if ($settings.theme -notin @('light', 'dark')) { $settings.theme = 'light' }
+if ($settings.bitrate -notmatch '^[1-9][0-9]{0,8}[KM]?$') { $settings.bitrate = $defaults.bitrate }
 
-function Get-DefaultSettings {
-  return [pscustomobject]@{
-    monitorIntervalSec = 8
-    bitrate            = "6M"
-    maxFps             = 30
-    maxSize            = 1280
-    language           = "zh-CN"
-    theme              = "dark"
+$profiles = Read-JsonFile -Path $paths.ProfileFile -DefaultValue ([pscustomobject]@{ defaultProfile = 'default'; items = @() })
+if (-not $profiles.items) { $profiles.items = @([pscustomobject]@{ name = 'default'; endpoint = '' }) }
+foreach ($profile in $profiles.items) {
+  foreach ($name in @('identity', 'hardwareSerial', 'model', 'pendingIdentity')) {
+    if (-not $profile.PSObject.Properties[$name]) { $profile | Add-Member -NotePropertyName $name -NotePropertyValue '' }
+  }
+  if (-not $profile.PSObject.Properties['pendingPair']) {
+    $profile | Add-Member -NotePropertyName pendingPair -NotePropertyValue $false
   }
 }
+# Older versions also saved a global last endpoint. Offer it in the manual address field only.
+$legacyAddress = ''
+$defaultProfile = $profiles.items | Where-Object { $_.name -eq 'default' } | Select-Object -First 1
+if ($defaultProfile -and -not $defaultProfile.endpoint -and (Test-Path -LiteralPath $paths.EndpointFile)) {
+  $legacyAddress = [string](Get-Content -LiteralPath $paths.EndpointFile -TotalCount 1)
+}
 
-function Normalize-Settings {
-  param([Parameter(Mandatory = $true)]$RawSettings)
-  $default = Get-DefaultSettings
-  foreach ($p in $default.PSObject.Properties.Name) {
-    if (-not $RawSettings.PSObject.Properties[$p]) {
-      $RawSettings | Add-Member -NotePropertyName $p -NotePropertyValue $default.$p
+$strings = @{
+  title = @('Android 手机控制中心', 'Android Phone Control')
+  usbDescription = @('通过数据线投屏和控制。首次连接需在手机上允许 USB 调试。', 'Mirror and control over a data cable. Allow USB debugging on the phone on first use.')
+  wifiDescription = @('使用手机上的六位配对码连接局域网中的 Android 设备。', 'Connect an Android phone on your local network with its six-digit pairing code.')
+  controls = @('控制与显示', 'Control and display')
+  optionHint = @('这些选项在下次启动控制时生效。', 'These options apply to the next control session.')
+  shortcuts = @('手机快捷键', 'Phone shortcuts')
+  shortcutHint = @('开始控制后，快捷键会发送给当前手机。', 'Start a control session to use shortcuts on the selected phone.')
+  turnScreenOff = @('灭屏控制', 'Turn phone screen off')
+  stayAwake = @('保持唤醒', 'Stay awake')
+  alwaysOnTop = @('窗口置顶', 'Always on top')
+  fullscreen = @('全屏启动', 'Start fullscreen')
+  showTouches = @('显示触摸点', 'Show touches')
+  noAudio = @('关闭音频', 'Mute phone audio')
+  storedProfile = @('设备配置', 'Device profile')
+  phoneBack = @('返回', 'Back')
+  phoneHome = @('主页', 'Home')
+  phoneRecents = @('多任务', 'Recents')
+  phonePower = @('电源', 'Power')
+  volumeUp = @('音量 +', 'Volume +')
+  volumeDown = @('音量 −', 'Volume −')
+  screenshot = @('截屏', 'Screenshot')
+  screenshotSaved = @('截图已保存。', 'Screenshot saved.')
+  actionFailed = @('手机操作失败。请查看诊断。', 'The phone action failed. See Diagnostics.')
+  home = @('控制中心', 'Control center')
+  preferences = @('偏好设置', 'Settings')
+  profiles = @('设备管理', 'Devices')
+  diagnostics = @('诊断', 'Diagnostics')
+  noDevice = @('尚未连接手机', 'No phone connected')
+  wifi = @('无线连接', 'Wi-Fi')
+  usb = @('USB 直连', 'USB direct')
+  usbConnect = @('USB 一键直连', 'Start USB control')
+  usbIdle = @('连接手机后点击下方按钮。', 'Plug in your phone, then select the button below.')
+  wifiIdle = @('尚未连接无线设备', 'No Wi-Fi phone connected')
+  usbOther = @('选择其他 USB 手机', 'Choose another USB phone')
+  add = @('连接手机', 'Connect phone')
+  resume = @('继续连接', 'Resume connection')
+  retry = @('重试连接', 'Retry connection')
+  pairAgain = @('配对新设备', 'Pair another device')
+  start = @('开始控制', 'Start control')
+  stop = @('停止控制', 'Stop control')
+  cancel = @('取消', 'Cancel')
+  back = @('返回设备页', 'Back to device')
+  manual = @('手动输入连接地址', 'Enter connection address')
+  phoneStep = @('1. 在手机上打开无线调试', '1. Open wireless debugging on your phone')
+  phoneGuide = @('进入「设置 → 开发者选项 → 无线调试」，保持手机和电脑在可互通的局域网。', 'Open Settings → Developer options → Wireless debugging. Keep both devices on a network that allows them to communicate.')
+  developerGuide = @('找不到开发者选项？在「关于手机」连续点按版本号，部分机型的入口名称不同。', 'Missing Developer options? Tap Build number repeatedly in About phone. The label varies by device.')
+  codeStep = @('2. 输入手机上的配对信息', '2. Enter the pairing details')
+  codeGuide = @('在无线调试中选择「使用配对码配对设备」，保持该弹窗打开。', 'Select Pair device with pairing code in Wireless debugging and leave that dialog open.')
+  pairAddress = @('配对弹窗中的 IP 地址和端口', 'IP address and port in the pairing dialog')
+  pairCode = @('六位配对码', 'Six-digit pairing code')
+  pair = @('配对并连接', 'Pair and connect')
+  addressGuide = @('返回手机的无线调试主页面，填写该页显示的 IP 地址和端口。', 'Return to the main Wireless debugging page and enter the IP address and port shown there.')
+  addressLabel = @('无线调试主页面的连接地址', 'Connection address on the Wireless debugging page')
+  chooseUsb = @('选择要控制的 USB 手机', 'Choose a USB phone to control')
+  usbGuide = @('使用支持数据传输的线缆，开启 USB 调试，并在手机上确认授权。', 'Use a data cable, enable USB debugging, then allow this computer on the phone.')
+  profile = @('无线设备配置', 'Wi-Fi profile')
+  profileName = @('新配置名称', 'New profile name')
+  addProfile = @('新建配置', 'New profile')
+  deleteProfile = @('删除当前配置', 'Delete current profile')
+  language = @('语言', 'Language')
+  theme = @('主题', 'Theme')
+  autoReconnect = @('自动重连已知无线设备', 'Automatically reconnect known Wi-Fi devices')
+  interval = @('重连检查间隔（秒）', 'Reconnect check interval (seconds)')
+  bitrate = @('视频码率', 'Video bitrate')
+  fps = @('最大帧率', 'Maximum frame rate')
+  size = @('最大画面尺寸', 'Maximum video size')
+  save = @('保存设置', 'Save settings')
+  clearLogs = @('清空面板', 'Clear panel')
+  openLogs = @('打开日志文件夹', 'Open log folder')
+  saved = @('设置已保存。', 'Settings saved.')
+  badBitrate = @('请输入有效的视频码率，例如 6M。', 'Enter a valid bitrate, such as 6M.')
+  deleteQuestion = @('删除当前无线配置？手机上的授权可以在系统设置中管理。', 'Delete this Wi-Fi profile? Manage the phone authorization in Android settings.')
+  disconnected = @('尚未连接手机。', 'No phone connected.')
+  pairing = @('正在配对，请保持手机配对弹窗打开。', 'Pairing. Leave the phone pairing dialog open.')
+  discovering = @('已配对，正在查找手机。', 'Paired. Looking for the phone.')
+  connecting = @('正在确认所选手机的连接。', 'Checking the selected phone.')
+  'address-needed' = @('未找到手机的连接地址。可从手机的无线调试主页面手动填写。', 'No connection address found. Enter it from the main Wireless debugging page.')
+  'paired-address-needed' = @('已配对。请从手机的无线调试主页面填写连接地址。', 'Paired. Enter the connection address shown on the main Wireless debugging page.')
+  'invalid-address' = @('请输入有效的 IP 地址和端口，例如 192.168.1.8:37001。', 'Enter a valid IP address and port, for example 192.168.1.8:37001.')
+  'invalid-code' = @('请输入手机当前显示的六位数字。', 'Enter the six digits displayed on your phone.')
+  'pair-failed' = @('配对失败。请在手机上获取新的六位码后重试。', 'Pairing failed. Get a fresh six-digit code on the phone and retry.')
+  'pair-unreachable' = @('配对地址不可达。请确认配对弹窗仍打开，并检查设备间网络连接。', 'Cannot reach the pairing address. Keep the dialog open and check the network between devices.')
+  'network-unreachable' = @('无法连接这个地址。请核对手机端口，检查访客网络或设备隔离。', 'Cannot connect to this address. Check the phone port and any guest network or client isolation.')
+  'device-mismatch' = @('这个地址对应的设备与已保存的手机不同，请核对目标。', 'This address points to a different device. Verify the target phone.')
+  'pairing-required' = @('手机未授权这台电脑。请在手机上重新配对。', 'The phone has not authorized this computer. Pair it again from the phone.')
+  connected = @('已连接，可开始控制。', 'Connected and ready to control.')
+  'usb-wait' = @('正在检测 USB。首次连接请解锁手机并允许 USB 调试。', 'Checking USB. For first use, unlock the phone and allow USB debugging.')
+  'usb-missing' = @('未检测到 USB 手机。请确认数据线和 USB 调试，然后重试。', 'No USB phone detected. Check the data cable and USB debugging, then retry.')
+  'usb-disconnected' = @('USB 已断开。请重新插入原手机，或选择另一台。', 'USB disconnected. Reconnect the same phone or choose another.')
+  'usb-authorization' = @('等待手机授权超时。请允许 USB 调试后重试。', 'USB authorization timed out. Allow USB debugging and retry.')
+  'usb-offline' = @('已检测到 USB 手机，但设备未就绪。请解锁手机或重新插线。', 'The USB phone is not ready. Unlock it or reconnect the cable.')
+  'choose-usb' = @('检测到多台 USB 手机。请选择需要控制的一台。', 'Multiple USB phones found. Select the one you want to control.')
+  launching = @('正在启动控制。', 'Starting control.')
+  controlling = @('正在控制手机。', 'Controlling your phone.')
+  'control-failed' = @('控制窗口启动失败。请检查设备连接，或查看诊断。', 'Control could not start. Check the device or open Diagnostics.')
+  cancelled = @('已取消，可以重试。', 'Cancelled. You can try again.')
+  timeout = @('连接请求超时。请检查设备与网络后重试。', 'The request timed out. Check the phone and network, then retry.')
+  failure = @('操作失败。请在诊断页查看详情。', 'The operation failed. See Diagnostics for details.')
+  'runtime-missing' = @('发布包不完整。请重新下载并完整解压 ZIP。', 'The release is incomplete. Download and extract the entire ZIP again.')
+}
+
+function Text-For([string]$Key) {
+  if (-not $strings.ContainsKey($Key)) { return $Key }
+  return $strings[$Key][[int]($settings.language -eq 'en-US')]
+}
+
+$form = New-Object Windows.Forms.Form
+$form.StartPosition = 'CenterScreen'
+$form.ClientSize = New-Object Drawing.Size(890, 654)
+$form.MinimumSize = New-Object Drawing.Size(680, 510)
+$form.AutoScaleMode = 'Dpi'
+$uiFontName = 'Microsoft YaHei UI'
+$form.Font = New-Object Drawing.Font($uiFontName, 10)
+$form.KeyPreview = $true
+
+$palette = @{}
+$captions = New-Object 'System.Collections.Generic.List[object]'
+$surfaces = New-Object 'System.Collections.Generic.List[object]'
+$buttons = New-Object 'System.Collections.Generic.List[object]'
+$inputs = New-Object 'System.Collections.Generic.List[object]'
+$headFont = New-Object Drawing.Font($uiFontName, 16, [Drawing.FontStyle]::Bold)
+$sectionFont = New-Object Drawing.Font($uiFontName, 11, [Drawing.FontStyle]::Bold)
+
+function Set-Caption($Control, [string]$Key) {
+  $Control.Text = Text-For $Key
+  $captions.Add(@{ Control = $Control; Key = $Key })
+}
+
+function New-Stack([int]$Padding = 0) {
+  $panel = New-Object Windows.Forms.TableLayoutPanel
+  $panel.AutoSize = $true
+  $panel.AutoSizeMode = 'GrowAndShrink'
+  $panel.Dock = 'Top'
+  $panel.ColumnCount = 1
+  $panel.Padding = New-Object Windows.Forms.Padding($Padding)
+  $panel.GrowStyle = 'AddRows'
+  $panel.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('Percent', 100))) | Out-Null
+  return $panel
+}
+
+function Add-Row($Stack, $Control, [int]$Gap = 12) {
+  $Control.Margin = New-Object Windows.Forms.Padding(0, 0, 0, $Gap)
+  $rowIndex = $Stack.RowCount
+  $Stack.RowCount = $rowIndex + 1
+  [void]$Stack.RowStyles.Add((New-Object Windows.Forms.RowStyle('AutoSize')))
+  $Stack.Controls.Add($Control, 0, $rowIndex)
+}
+
+function New-Label([string]$Key, [string]$Style = 'body') {
+  $label = New-Object Windows.Forms.Label
+  $label.AutoSize = $true
+  if ($Style -eq 'heading') { $label.Font = $headFont }
+  if ($Style -eq 'section') { $label.Font = $sectionFont }
+  if ($Key) { Set-Caption $label $Key }
+  if ($Style -ne 'heading') {
+    $label.MaximumSize = New-Object Drawing.Size(490, 0)
+  }
+  $label.Tag = $Style
+  return $label
+}
+
+function New-Button([string]$Key, [bool]$Primary = $false) {
+  $button = New-Object Windows.Forms.Button
+  $button.AutoSize = $true
+  $button.AutoSizeMode = 'GrowAndShrink'
+  $button.MinimumSize = New-Object Drawing.Size(116, 38)
+  $button.Padding = New-Object Windows.Forms.Padding(12, 4, 12, 4)
+  $button.FlatStyle = 'Flat'
+  $button.UseVisualStyleBackColor = $false
+  $button.Tag = $Primary
+  if ($Key) { Set-Caption $button $Key }
+  $buttons.Add($button)
+  return $button
+}
+
+function New-ButtonRow([object[]]$Controls) {
+  $row = New-Object Windows.Forms.FlowLayoutPanel
+  $row.AutoSize = $true
+  $row.AutoSizeMode = 'GrowAndShrink'
+  $row.Dock = 'Top'
+  $row.Size = New-Object Drawing.Size(560, 1)
+  $row.WrapContents = $true
+  foreach ($control in $Controls) {
+    $control.Margin = New-Object Windows.Forms.Padding(0, 0, 9, 5)
+    $row.Controls.Add($control)
+  }
+  return $row
+}
+
+function New-Input([int]$Width, [string]$LabelKey) {
+  $box = New-Object Windows.Forms.TextBox
+  $box.Width = $Width
+  if ($LabelKey) { $box.AccessibleName = Text-For $LabelKey }
+  $inputs.Add($box)
+  return $box
+}
+
+function New-Combo {
+  $box = New-Object Windows.Forms.ComboBox
+  $box.DropDownStyle = 'DropDownList'
+  $box.Width = 260
+  $inputs.Add($box)
+  return $box
+}
+
+function New-Number([int]$Min, [int]$Max, [int]$Value) {
+  $box = New-Object Windows.Forms.NumericUpDown
+  $box.Minimum = $Min
+  $box.Maximum = $Max
+  $box.Value = [Math]::Max($Min, [Math]::Min($Max, $Value))
+  $box.Width = 110
+  $inputs.Add($box)
+  return $box
+}
+
+function New-Page([string]$Key) {
+  $page = New-Object Windows.Forms.TabPage
+  Set-Caption $page $Key
+  $page.AutoScroll = $true
+  $surfaces.Add($page)
+  return $page
+}
+
+$tabs = New-Object Windows.Forms.TabControl
+$tabs.Dock = 'Fill'
+$tabs.Padding = New-Object Drawing.Point(13, 6)
+$pageHome = New-Page 'home'
+$pageProfiles = New-Page 'profiles'
+$pageSettings = New-Page 'preferences'
+$pageLogs = New-Page 'diagnostics'
+$tabs.TabPages.AddRange(@($pageHome, $pageProfiles, $pageSettings, $pageLogs))
+$form.Controls.Add($tabs)
+
+
+$homeLayout = New-Stack 24
+$pageHome.Controls.Add($homeLayout)
+$masthead = New-Stack 17
+$mastheadTitle = New-Label 'title' 'heading'
+Add-Row $masthead $mastheadTitle 0
+$form.Controls.Add($masthead)
+
+$card = New-Stack 18
+$surfaces.Add($card)
+$deviceName = New-Label '' 'section'
+$deviceMode = New-Label '' 'body'
+$statusLabel = New-Label '' 'body'
+$btnPrimary = New-Button '' $true
+$btnUsb = New-Button '' $true
+$btnCancel = New-Button 'cancel'
+$btnManual = New-Button 'manual'
+$btnNewPair = New-Button 'pairAgain'
+$btnUsbOther = New-Button 'usbOther'
+$wifiDescription = New-Label 'wifiDescription'
+$wifiDescription.MaximumSize = New-Object Drawing.Size(265, 0)
+$wifiTitle = New-Label 'wifi' 'section'
+Add-Row $card $wifiTitle 5
+Add-Row $card $wifiDescription 12
+Add-Row $card $deviceName 5
+Add-Row $card $deviceMode 5
+Add-Row $card $statusLabel 11
+Add-Row $card (New-ButtonRow @($btnPrimary, $btnCancel)) 0
+Add-Row $card (New-ButtonRow @($btnManual, $btnNewPair)) 0
+
+$usbCard = New-Stack 17
+$surfaces.Add($usbCard)
+$usbTitle = New-Label 'usb' 'section'
+$usbDescription = New-Label 'usbDescription'
+$usbDescription.MaximumSize = New-Object Drawing.Size(265, 0)
+$usbModel = New-Label '' 'body'
+$usbStatus = New-Label '' 'body'
+Add-Row $usbCard $usbTitle 5
+Add-Row $usbCard $usbDescription 12
+Add-Row $usbCard $usbModel 5
+Add-Row $usbCard $usbStatus 11
+Add-Row $usbCard (New-ButtonRow @($btnUsb, $btnUsbOther)) 0
+$btnUsbCancel = New-Button 'cancel'
+Add-Row $usbCard $btnUsbCancel 0
+
+function New-SplitCards($Left, $Right) {
+  $columns = New-Object Windows.Forms.TableLayoutPanel
+  $columns.AutoSize = $true
+  $columns.AutoSizeMode = 'GrowAndShrink'
+  $columns.Dock = 'Fill'
+  $columns.ColumnCount = 2
+  $columns.RowCount = 1
+  [void]$columns.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('Percent', 50)))
+  [void]$columns.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle('Percent', 50)))
+  [void]$columns.RowStyles.Add((New-Object Windows.Forms.RowStyle('AutoSize')))
+  $Left.Dock = 'Fill'
+  $Right.Dock = 'Fill'
+  $Left.Margin = New-Object Windows.Forms.Padding(0, 0, 12, 0)
+  $Right.Margin = New-Object Windows.Forms.Padding(0)
+  $columns.Controls.Add($Left, 0, 0)
+  $columns.Controls.Add($Right, 1, 0)
+  return $columns
+}
+
+$homeCards = New-SplitCards $usbCard $card
+Add-Row $homeLayout $homeCards 12
+
+$optionsCard = New-Stack 17
+$surfaces.Add($optionsCard)
+$optionsTitle = New-Label 'controls' 'section'
+Add-Row $optionsCard $optionsTitle 5
+Add-Row $optionsCard (New-Label 'optionHint') 10
+$optionChecks = [ordered]@{}
+foreach ($key in @('turnScreenOff', 'stayAwake', 'alwaysOnTop', 'fullscreen', 'showTouches', 'noAudio')) {
+  $checkbox = New-Object Windows.Forms.CheckBox
+  $checkbox.AutoSize = $true
+  $checkbox.Checked = [bool]$settings.$key
+  Set-Caption $checkbox $key
+  $optionChecks[$key] = $checkbox
+}
+Add-Row $optionsCard (New-ButtonRow @($optionChecks.Values)) 0
+$shortcutCard = New-Stack 17
+$surfaces.Add($shortcutCard)
+$shortcutTitle = New-Label 'shortcuts' 'section'
+Add-Row $shortcutCard $shortcutTitle 5
+$shortcutFeedback = New-Label ''
+Add-Row $shortcutCard $shortcutFeedback 10
+$shortcutButtons = @{}
+$shortcutKeys = [ordered]@{ phoneBack = 4; phoneHome = 3; phoneRecents = 187; phonePower = 26; volumeUp = 24; volumeDown = 25; screenshot = -1 }
+foreach ($key in $shortcutKeys.Keys) {
+  $button = New-Button $key
+  $button.MinimumSize = New-Object Drawing.Size(67, 35)
+  $button.Add_Paint({
+      param($sender, $eventArgs)
+      if ($sender.Enabled -or $settings.theme -ne 'dark') { return }
+      $rectangle = $sender.ClientRectangle
+      $eventArgs.Graphics.Clear($palette.Card)
+      $pen = New-Object Drawing.Pen($palette.Border)
+      try { $eventArgs.Graphics.DrawRectangle($pen, 0, 0, $rectangle.Width - 1, $rectangle.Height - 1) }
+      finally { $pen.Dispose() }
+      [Windows.Forms.TextRenderer]::DrawText($eventArgs.Graphics, $sender.Text, $sender.Font, $rectangle,
+        $palette.Muted, [Windows.Forms.TextFormatFlags]'HorizontalCenter, VerticalCenter, SingleLine')
+    })
+  $shortcutButtons[$key] = $button
+}
+Add-Row $shortcutCard (New-ButtonRow @($shortcutKeys.Keys | ForEach-Object { $shortcutButtons[$_] })) 0
+$quickCards = New-SplitCards $optionsCard $shortcutCard
+Add-Row $homeLayout $quickCards 0
+
+$pairPanel = New-Stack 18
+$surfaces.Add($pairPanel)
+Add-Row $pairPanel (New-Label 'phoneStep' 'section') 5
+Add-Row $pairPanel (New-Label 'phoneGuide') 6
+Add-Row $pairPanel (New-Label 'developerGuide') 14
+Add-Row $pairPanel (New-Label 'codeStep' 'section') 5
+Add-Row $pairPanel (New-Label 'codeGuide') 10
+$pairAddress = New-Input 260 'pairAddress'
+$pairAddress.MaxLength = 64
+$pairCode = New-Input 130 'pairCode'
+$pairCode.MaxLength = 6
+$pairCode.UseSystemPasswordChar = $true
+$btnPair = New-Button 'pair' $true
+$btnBackPair = New-Button 'back'
+$btnPairManual = New-Button 'manual'
+$btnCancelPair = New-Button 'cancel'
+$pairFeedback = New-Label ''
+Add-Row $pairPanel (New-Label 'pairAddress') 4
+Add-Row $pairPanel $pairAddress 10
+Add-Row $pairPanel (New-Label 'pairCode') 4
+Add-Row $pairPanel $pairCode 12
+Add-Row $pairPanel (New-ButtonRow @($btnPair, $btnBackPair, $btnCancelPair)) 6
+Add-Row $pairPanel $pairFeedback 6
+Add-Row $pairPanel $btnPairManual 0
+Add-Row $homeLayout $pairPanel 12
+
+$addressPanel = New-Stack 18
+$surfaces.Add($addressPanel)
+Add-Row $addressPanel (New-Label 'addressLabel' 'section') 5
+Add-Row $addressPanel (New-Label 'addressGuide') 10
+$addressInput = New-Input 260 'addressLabel'
+$addressInput.MaxLength = 64
+$btnAddress = New-Button 'resume' $true
+$btnBackAddress = New-Button 'back'
+$btnCancelAddress = New-Button 'cancel'
+$addressFeedback = New-Label ''
+Add-Row $addressPanel $addressInput
+Add-Row $addressPanel (New-ButtonRow @($btnAddress, $btnBackAddress, $btnCancelAddress)) 6
+Add-Row $addressPanel $addressFeedback 0
+Add-Row $homeLayout $addressPanel 12
+
+$usbPanel = New-Stack 18
+$surfaces.Add($usbPanel)
+Add-Row $usbPanel (New-Label 'chooseUsb' 'section') 5
+Add-Row $usbPanel (New-Label 'usbGuide') 10
+$usbList = New-Combo
+$usbList.AccessibleName = Text-For 'chooseUsb'
+$usbList.DisplayMember = 'Label'
+$btnUsbSelect = New-Button 'start' $true
+$btnBackUsb = New-Button 'back'
+Add-Row $usbPanel $usbList
+Add-Row $usbPanel (New-ButtonRow @($btnUsbSelect, $btnBackUsb)) 0
+Add-Row $homeLayout $usbPanel 12
+
+$deviceLayout = New-Stack 24
+$pageProfiles.Controls.Add($deviceLayout)
+Add-Row $deviceLayout (New-Label 'profiles' 'section')
+$profileList = New-Combo
+$profileList.DisplayMember = 'name'
+$profileList.AccessibleName = Text-For 'profile'
+$profileName = New-Input 260 'profileName'
+$profileName.MaxLength = 50
+$btnAddProfile = New-Button 'addProfile'
+$btnDeleteProfile = New-Button 'deleteProfile'
+Add-Row $deviceLayout (New-Label 'profile') 4
+Add-Row $deviceLayout $profileList
+Add-Row $deviceLayout (New-Label 'profileName') 4
+Add-Row $deviceLayout $profileName
+Add-Row $deviceLayout (New-ButtonRow @($btnAddProfile, $btnDeleteProfile))
+
+$preferences = New-Stack 24
+$pageSettings.Controls.Add($preferences)
+Add-Row $preferences (New-Label 'preferences' 'section')
+$langList = New-Combo
+[void]$langList.Items.AddRange(@('简体中文', 'English'))
+$langList.SelectedIndex = [int]($settings.language -eq 'en-US')
+$langList.AccessibleName = Text-For 'language'
+$themeList = New-Combo
+[void]$themeList.Items.AddRange(@('Light / 浅色', 'Dark / 深色'))
+$themeList.SelectedIndex = [int]($settings.theme -eq 'dark')
+$themeList.AccessibleName = Text-For 'theme'
+$autoReconnect = New-Object Windows.Forms.CheckBox
+$autoReconnect.AutoSize = $true
+$autoReconnect.Checked = [bool]$settings.autoReconnect
+Set-Caption $autoReconnect 'autoReconnect'
+$interval = New-Number 3 120 $settings.monitorIntervalSec
+$bitrate = New-Input 110 'bitrate'
+$bitrate.Text = [string]$settings.bitrate
+$fps = New-Number 1 240 $settings.maxFps
+$maxSize = New-Number 0 8192 $settings.maxSize
+$btnSaveSettings = New-Button 'save' $true
+$settingsNote = New-Label '' 'body'
+foreach ($field in @(
+    @{ Key = 'language'; Control = $langList },
+    @{ Key = 'theme'; Control = $themeList },
+    @{ Key = 'interval'; Control = $interval },
+    @{ Key = 'bitrate'; Control = $bitrate },
+    @{ Key = 'fps'; Control = $fps },
+    @{ Key = 'size'; Control = $maxSize })) {
+  Add-Row $preferences (New-Label $field.Key) 4
+  $field.Control.AccessibleName = Text-For $field.Key
+  Add-Row $preferences $field.Control
+}
+Add-Row $preferences $autoReconnect
+Add-Row $preferences $btnSaveSettings
+Add-Row $preferences $settingsNote
+
+$logLayout = New-Stack 24
+$pageLogs.Controls.Add($logLayout)
+$logBox = New-Input 450 ''
+$logBox.Multiline = $true
+$logBox.ReadOnly = $true
+$logBox.ScrollBars = 'Vertical'
+$logBox.Height = 300
+$logBox.Dock = 'Fill'
+$btnClearLogs = New-Button 'clearLogs'
+$btnOpenLogs = New-Button 'openLogs'
+Add-Row $logLayout (New-Label 'diagnostics' 'section')
+Add-Row $logLayout $logBox
+Add-Row $logLayout (New-ButtonRow @($btnClearLogs, $btnOpenLogs))
+
+$state = @{
+  Job = $null; View = 'home'; Status = 'disconnected'; Device = $null; Mode = 'wifi'
+  UsbSerial = ''; Control = $null; ErrorLog = ''; ShortcutNote = ''; NextMonitor = [DateTime]::UtcNow
+  Runtime = Test-ScrcpyRuntime; LoadingProfiles = $false; Closing = $false
+}
+$managedInputs = @($pairAddress, $pairCode, $addressInput, $usbList, $profileList,
+  $profileName, $btnAddProfile, $btnDeleteProfile, $btnPair, $btnAddress, $btnUsbSelect)
+
+function Apply-Appearance {
+  $dark = $settings.theme -eq 'dark'
+  if ($dark) {
+    $palette.Page = [Drawing.ColorTranslator]::FromHtml('#151D29')
+    $palette.Card = [Drawing.ColorTranslator]::FromHtml('#202C3D')
+    $palette.Input = [Drawing.ColorTranslator]::FromHtml('#101923')
+    $palette.Text = [Drawing.ColorTranslator]::FromHtml('#ECF3FE')
+    $palette.Muted = [Drawing.ColorTranslator]::FromHtml('#C2CFE3')
+    $palette.Border = [Drawing.ColorTranslator]::FromHtml('#495B75')
+  } else {
+    $palette.Page = [Drawing.ColorTranslator]::FromHtml('#F3F4F6')
+    $palette.Card = [Drawing.Color]::White
+    $palette.Input = [Drawing.Color]::White
+    $palette.Text = [Drawing.ColorTranslator]::FromHtml('#1E293B')
+    $palette.Muted = [Drawing.ColorTranslator]::FromHtml('#3F5774')
+    $palette.Border = [Drawing.ColorTranslator]::FromHtml('#D4DEEB')
+  }
+  $accent = [Drawing.ColorTranslator]::FromHtml('#2563EB')
+  $masthead.BackColor = $palette.Card
+  $mastheadTitle.ForeColor = if ($dark) { [Drawing.ColorTranslator]::FromHtml('#93BCFF') } else { $accent }
+  $form.ForeColor = $palette.Text
+  $form.BackColor = $palette.Page
+  foreach ($surface in $surfaces) {
+    $surface.BackColor = if ($surface -is [Windows.Forms.TabPage]) { $palette.Page } else { $palette.Card }
+    $surface.ForeColor = $palette.Text
+  }
+  foreach ($inputControl in $inputs) {
+    $inputControl.ForeColor = $palette.Text
+    $inputControl.BackColor = $palette.Input
+  }
+  foreach ($button in $buttons) {
+    $button.BackColor = if ($button.Tag -eq $true) { $accent } else { $palette.Card }
+    $button.ForeColor = if ($button.Tag -eq $true) { [Drawing.Color]::White } else { $palette.Text }
+    $button.FlatAppearance.BorderColor = if ($button.Tag -eq $true) { $accent } else { $palette.Border }
+  }
+  foreach ($label in @($deviceMode, $wifiDescription, $usbDescription, $usbStatus, $pairFeedback, $addressFeedback)) { $label.ForeColor = $palette.Muted }
+  foreach ($label in @($wifiTitle, $usbTitle, $optionsTitle, $shortcutTitle)) { $label.ForeColor = $mastheadTitle.ForeColor }
+}
+
+function Add-Diagnostic([string]$Detail) {
+  if (-not $Detail) { return }
+  $stamp = Get-Date -Format 'HH:mm:ss'
+  if ($logBox.TextLength -gt 24000) { $logBox.Clear() }
+  $logBox.AppendText("[$stamp] $Detail" + [Environment]::NewLine)
+  try { Write-AppLog -Message $Detail } catch { $logBox.AppendText($_.Exception.Message + [Environment]::NewLine) }
+}
+
+function Show-State {
+  $busy = $null -ne $state.Job
+  $running = $null -ne $state.Control
+  $selected = $profileList.SelectedItem
+  $statusKey = if ($state.Status -eq 'address-needed' -and $selected.pendingPair) { 'paired-address-needed' } else { $state.Status }
+  $statusLabel.Text = Text-For $statusKey
+  if ($state.Device) {
+    $deviceName.Text = if ($state.Device.Model) { $state.Device.Model } else { $state.Device.Serial }
+  } elseif ($state.Mode -eq 'wifi' -and $selected.model) {
+    $deviceName.Text = $selected.model
+  } else {
+    $deviceName.Text = Text-For 'noDevice'
+  }
+  $btnPrimary.Text = if ($running) { Text-For 'stop' }
+    elseif ($state.Status -in @('connected', 'control-failed') -and $state.Device.Kind -eq 'wifi') { Text-For 'start' }
+    elseif ($selected.pendingPair) { Text-For 'resume' }
+    elseif ($selected.identity) { Text-For 'retry' }
+    elseif ($selected.endpoint) { Text-For 'resume' }
+    else { Text-For 'add' }
+  $onHome = $state.View -eq 'home'
+  $hasProfile = [bool]($selected.identity -or $selected.pendingPair -or $selected.endpoint)
+  $canConnect = $onHome -and -not $busy -and -not $running
+  $usbActive = $state.Mode -eq 'usb'
+  $usbRunning = $usbActive -and $running
+  $homeCards.Visible = $onHome
+  $quickCards.Visible = $onHome
+  foreach ($button in $shortcutButtons.Values) { $button.Enabled = $running -and -not $busy }
+  $shortcutFeedback.Text = if ($state.ShortcutNote) { Text-For $state.ShortcutNote }
+    elseif ($running) { $statusLabel.Text }
+    else { Text-For 'shortcutHint' }
+  $btnPrimary.Visible = $onHome
+  $btnPrimary.Enabled = $canConnect -or ($running -and -not $usbActive -and -not $busy)
+  $btnUsb.Text = if ($usbRunning) { Text-For 'stop' } else { Text-For 'usbConnect' }
+  $btnUsb.Enabled = $canConnect -or ($usbRunning -and -not $busy)
+  $btnUsbOther.Visible = $canConnect -and [bool]$state.UsbSerial
+  $btnManual.Visible = $canConnect -and ($hasProfile -or $state.Status -eq 'address-needed')
+  $btnNewPair.Visible = $canConnect -and $hasProfile
+  $btnCancel.Visible = $busy -and $onHome -and -not $usbActive
+  $btnUsbCancel.Visible = $busy -and $onHome -and $usbActive
+  $btnCancelPair.Visible = $busy -and $state.View -eq 'pair'
+  $btnCancelAddress.Visible = $busy -and $state.View -eq 'address'
+  foreach ($cancelButton in @($btnCancel, $btnUsbCancel, $btnCancelPair, $btnCancelAddress)) {
+    $cancelButton.Enabled = $busy -and -not $state.Job.Token.IsCancellationRequested
+  }
+  $btnBackPair.Enabled = -not $busy
+  $btnBackAddress.Enabled = -not $busy
+  $btnPairManual.Visible = -not $busy
+  $deviceName.Visible = [bool]($selected.model -or ($state.Device -and -not $usbActive))
+  $deviceMode.Visible = $hasProfile
+  $deviceMode.Text = if ($hasProfile) { (Text-For 'storedProfile') + ' · ' + $selected.name } else { '' }
+  $usbModel.Text = if ($usbActive -and $state.Device) { $deviceName.Text } else { '' }
+  $usbModel.Visible = [bool]$usbModel.Text
+  $usbStatus.Text = if ($usbActive) { Text-For $state.Status } else { Text-For 'usbIdle' }
+  if ($usbActive) {
+    $deviceName.Text = if ($selected.model) { $selected.model } else { Text-For 'noDevice' }
+    $statusLabel.Text = Text-For 'wifiIdle'
+    $btnPrimary.Text = if ($hasProfile) { Text-For 'resume' } else { Text-For 'add' }
+  }
+  $pairFeedback.Text = Text-For $state.Status
+  $pairFeedback.Visible = $state.View -eq 'pair' -and $state.Status -ne 'disconnected'
+  $addressFeedback.Text = Text-For $statusKey
+  $addressFeedback.Visible = $state.View -eq 'address' -and $state.Status -ne 'disconnected'
+  $pairPanel.Visible = $state.View -eq 'pair'
+  $addressPanel.Visible = $state.View -eq 'address'
+  $usbPanel.Visible = $state.View -eq 'usb'
+  foreach ($control in $managedInputs) { $control.Enabled = -not $busy -and -not $running }
+  $btnUsbSelect.Enabled = -not $busy -and $usbList.SelectedIndex -ge 0
+  $form.AcceptButton = if ($busy) { $null }
+    elseif ($state.View -eq 'pair') { $btnPair }
+    elseif ($state.View -eq 'address') { $btnAddress }
+    elseif ($state.View -eq 'usb') { $btnUsbSelect }
+    else { $null }
+  $statusLabel.ForeColor = if ($state.Mode -eq 'wifi' -and $state.Status -in @('connected', 'controlling')) {
+    if ($settings.theme -eq 'dark') { [Drawing.ColorTranslator]::FromHtml('#85DFC0') }
+    else { [Drawing.ColorTranslator]::FromHtml('#146A50') }
+  } else { $palette.Muted }
+}
+
+function Set-State([string]$Status, [string]$Detail) {
+  if ($state.Status -ne $Status -and $Detail) { Add-Diagnostic $Detail }
+  $state.Status = $Status
+  Show-State
+}
+
+function Save-Profiles {
+  Write-JsonFile -Path $paths.ProfileFile -Value $profiles
+}
+
+function Update-Profiles([string]$Preferred) {
+  $state.LoadingProfiles = $true
+  try {
+    $profileList.Items.Clear()
+    foreach ($entry in $profiles.items) {
+      [void]$profileList.Items.Add($entry)
+      if ($entry.name -eq $Preferred) { $profileList.SelectedItem = $entry }
+    }
+    if ($profileList.SelectedIndex -lt 0) { $profileList.SelectedIndex = 0 }
+  }
+  finally { $state.LoadingProfiles = $false }
+}
+
+
+$worker = {
+  param($Root, $Task, $Data, [Threading.CancellationToken]$Token)
+  $ErrorActionPreference = 'Stop'
+  Import-Module (Join-Path $Root 'core\pairing.psm1')
+  Import-Module (Join-Path $Root 'core\control.psm1')
+  Import-Module (Join-Path $Root 'core\monitor.psm1')
+  $video = @{ Bitrate = $Data.Bitrate; MaxFps = $Data.Fps; MaxSize = $Data.Size; Options = $Data.Options }
+
+  switch ($Task) {
+    'pair' { Invoke-DevicePairing -PairEndpoint $Data.Address -PairCode $Data.Code -Token $Token }
+    'discover' { Resolve-WifiDevice -Identity $Data.Identity -WaitForDiscovery -Token $Token }
+    'manual' {
+      Resolve-WifiDevice -Identity $Data.Identity -Address $Data.Address -HardwareSerial $Data.HardwareSerial -ExplicitAddress -Token $Token
+    }
+    'monitor' {
+      Get-ConnectionStatus -Identity $Data.Identity -Address $Data.Address -HardwareSerial $Data.HardwareSerial -Token $Token
+    }
+    'usb' {
+      $result = Resolve-UsbDevice -Serial $Data.Serial -Token $Token
+      if ($result.Status -ne 'connected') { return $result }
+      Start-ScrcpyControl -Device $result.Device @video -Token $Token
+    }
+    'usb-status' { Resolve-UsbDevice -Serial $Data.Serial -Token $Token -AuthorizationSeconds 0 }
+    'shortcut' { Invoke-PhoneAction -Device $Data.Device -HardwareSerial $Data.HardwareSerial -KeyCode $Data.KeyCode -Token $Token }
+    'control' {
+      Start-ScrcpyControl -Device $Data.Device -HardwareSerial $Data.HardwareSerial @video -Token $Token
     }
   }
-  return $RawSettings
 }
 
-$settings = Normalize-Settings -RawSettings (Read-JsonFile -Path $paths.SettingsFile -DefaultValue (Get-DefaultSettings))
-$profiles = Read-JsonFile -Path $paths.ProfileFile -DefaultValue ([pscustomobject]@{
-    defaultProfile = "default"
-    items          = @([pscustomobject]@{ name = "default"; endpoint = "" })
+function Start-Work([string]$Task, [hashtable]$Data = @{}, [string]$Message) {
+  if ($state.Job -or $state.Closing) { return }
+  $state.Runtime = Test-ScrcpyRuntime
+  if (-not $state.Runtime.Success) {
+    Set-State 'runtime-missing' $state.Runtime.Message
+    return
+  }
+  $env:ADB = Join-Path $state.Runtime.Root 'adb.exe'
+  $env:SCRCPY_SERVER_PATH = Join-Path $state.Runtime.Root 'scrcpy-server'
+  $Data.Bitrate = [string]$settings.bitrate
+  $Data.Fps = [int]$settings.maxFps
+  $Data.Size = [int]$settings.maxSize
+  $Data.Options = @{}
+  foreach ($key in $optionChecks.Keys) { $Data.Options[$key] = $optionChecks[$key].Checked }
+  $cancelSource = New-Object Threading.CancellationTokenSource
+  $pipeline = [PowerShell]::Create()
+  try {
+    [void]$pipeline.AddScript($worker.ToString()).AddArgument($appRoot).AddArgument($Task).AddArgument($Data).AddArgument($cancelSource.Token)
+    $handle = $pipeline.BeginInvoke()
+    $state.Job = @{ Pipeline = $pipeline; Handle = $handle; Token = $cancelSource; Task = $Task }
+    if ($Message) { Set-State $Message }
+    else { Show-State }
+  }
+  catch {
+    $pipeline.Dispose()
+    $cancelSource.Dispose()
+    Set-State 'failure' $_.Exception.Message
+  }
+}
+
+function Stop-Control {
+  if (-not $state.Control) { return }
+  try { if (-not $state.Control.HasExited) { $state.Control.Kill() } } catch [InvalidOperationException] {}
+  finally {
+    $state.Control.Dispose()
+    $state.Control = $null
+    $state.ShortcutNote = ''
+  }
+}
+
+function Show-ConnectAddress([bool]$UseStoredAddress) {
+  $profile = $profileList.SelectedItem
+  $addressInput.Text = if (-not $UseStoredAddress -or $profile.pendingPair) { '' }
+    elseif ($profile.endpoint) { $profile.endpoint }
+    elseif ($profile.name -eq 'default') { $legacyAddress }
+    else { '' }
+  $state.View = 'address'
+  Show-State
+  $pageHome.AutoScrollPosition = New-Object Drawing.Point(0, 0)
+  [void]$addressInput.Focus()
+}
+
+function Set-ConnectedWifi($Result) {
+  $selected = $profileList.SelectedItem
+  if ($Result.Address) { $selected.endpoint = $Result.Address }
+  elseif ($selected.pendingPair) { $selected.endpoint = '' }
+  $selected.identity = [string]$Result.Identity
+  if ($Result.HardwareSerial) { $selected.hardwareSerial = $Result.HardwareSerial }
+  elseif ($selected.pendingPair) { $selected.hardwareSerial = '' }
+  $selected.model = [string]$Result.Device.Model
+  $selected.pendingIdentity = ''
+  $selected.pendingPair = $false
+  try { Save-Profiles } catch { Add-Diagnostic $_.Exception.Message }
+  $state.Device = $Result.Device
+  $state.Mode = 'wifi'
+  $state.View = 'home'
+  Set-State 'connected'
+}
+
+function Receive-Work {
+  $job = $state.Job
+  if (-not $job -or -not $job.Handle.IsCompleted) { return }
+  $state.Job = $null
+  $state.NextMonitor = [DateTime]::UtcNow.AddSeconds([int]$interval.Value)
+  $result = $null
+  $exception = $null
+  try {
+    $output = @($job.Pipeline.EndInvoke($job.Handle))
+    if ($output.Count -ne 1) { throw 'The device operation returned an unexpected result.' }
+    $result = $output[0]
+  }
+  catch { $exception = $_.Exception }
+  finally {
+    $cancelled = $job.Token.IsCancellationRequested
+    $job.Pipeline.Dispose()
+    $job.Token.Dispose()
+  }
+
+  if ($cancelled -or $state.Closing) {
+    if ($result.Process) {
+      $state.Control = $result.Process
+      Stop-Control
+    }
+    if (-not $state.Closing) {
+      if ($job.Task -eq 'shortcut') { $state.ShortcutNote = 'cancelled'; Show-State }
+      else { Set-State 'cancelled' }
+    }
+    return
+  }
+  if ($exception) {
+    $detail = $exception.GetBaseException().Message
+    if ($job.Task -eq 'shortcut') {
+      Add-Diagnostic $detail
+      $state.ShortcutNote = 'actionFailed'
+      Show-State
+      return
+    }
+    Set-State $(if ($detail -match 'timed out|timeout') { 'timeout' } else { 'failure' }) $detail
+    return
+  }
+
+  if ($job.Task -eq 'shortcut') {
+    Add-Diagnostic $result.Detail
+    $state.ShortcutNote = if ($result.Status -eq 'action-failed') { 'actionFailed' }
+      elseif ($result.Path) { 'screenshotSaved' }
+      else { '' }
+    if ($result.Path) {
+      try { Start-Process -FilePath $result.Path } catch { Add-Diagnostic $_.Exception.Message }
+    }
+    Show-State
+    return
+  }
+
+  $profile = $profileList.SelectedItem
+  if ($job.Task -eq 'pair' -and $result.Status -eq 'paired') {
+    $pairCode.Clear()
+    $profile.pendingPair = $true
+    $profile.pendingIdentity = [string]$result.Identity
+    try { Save-Profiles } catch { Add-Diagnostic $_.Exception.Message }
+    $state.View = 'home'
+    $state.Device = $null
+    if ($profile.pendingIdentity) {
+      Start-Work 'discover' @{ Identity = $profile.pendingIdentity } 'discovering'
+    } else {
+      Set-State 'address-needed'
+      Show-ConnectAddress $false
+    }
+    return
+  }
+
+  if ($job.Task -in @('discover', 'manual', 'monitor') -and $result.Status -eq 'connected') {
+    if ($job.Task -eq 'monitor' -and $state.Device.Serial -ceq $result.Device.Serial -and
+        $profile.endpoint -eq $result.Address -and $state.Status -eq 'connected') {
+      Show-State
+    } else {
+      Set-ConnectedWifi $result
+    }
+    return
+  }
+
+  if ($result.Status -eq 'choose-usb') {
+    $usbList.Items.Clear()
+    foreach ($candidate in $result.Devices) {
+      $label = if ($candidate.Model) { "$($candidate.Model)  ·  $($candidate.Serial)" } else { $candidate.Serial }
+      [void]$usbList.Items.Add([pscustomobject]@{ Label = $label; Serial = $candidate.Serial })
+    }
+    $state.View = 'usb'
+    Set-State 'choose-usb'
+    [void]$usbList.Focus()
+    return
+  }
+  if ($result.Status -eq 'controlling') {
+    $state.Control = $result.Process
+    $state.ErrorLog = $result.ErrorLog
+    $state.Device = $result.Device
+    if ($job.Task -eq 'usb') { $state.UsbSerial = $result.Device.Serial }
+    Set-State 'controlling'
+    return
+  }
+  if ($job.Task -eq 'usb-status') {
+    if ($result.Status -eq 'usb-missing') {
+      $state.Device = $null
+      Set-State 'usb-disconnected'
+    } elseif ($result.Status -eq 'connected') {
+      Set-State 'disconnected'
+    } else {
+      Set-State $result.Status $result.Detail
+    }
+    return
+  }
+  if ($result.Device -and $job.Task -eq 'usb') { $state.UsbSerial = $result.Device.Serial }
+  if ($job.Task -in @('discover', 'manual', 'monitor')) { $state.Device = $null }
+  Set-State $result.Status $result.Detail
+  if ($job.Task -eq 'discover' -and $result.Status -eq 'address-needed') { Show-ConnectAddress $false }
+}
+
+function Start-Usb([string]$Serial) {
+  $state.Mode = 'usb'
+  $state.Device = $null
+  $state.View = 'home'
+  Start-Work 'usb' @{ Serial = $Serial } 'usb-wait'
+}
+
+function Show-PairForm {
+  $state.Mode = 'wifi'
+  $state.View = 'pair'
+  $state.Device = $null
+  Set-State 'disconnected'
+  $pageHome.AutoScrollPosition = New-Object Drawing.Point(0, 0)
+  [void]$pairAddress.Focus()
+}
+
+function Open-Home {
+  if ($state.Job) { return }
+  $state.View = 'home'
+  Show-State
+  $pageHome.AutoScrollPosition = New-Object Drawing.Point(0, 0)
+}
+
+$btnPrimary.Add_Click({
+    if ($state.Control) {
+      Stop-Control
+      Set-State $(if ($state.Mode -eq 'wifi' -and $state.Device) { 'connected' } else { 'disconnected' })
+      return
+    }
+    $profile = $profileList.SelectedItem
+    $state.Mode = 'wifi'
+    if ($state.Status -in @('connected', 'control-failed') -and $state.Device.Kind -eq 'wifi') {
+      Start-Work 'control' @{ Device = $state.Device; HardwareSerial = $profile.hardwareSerial } 'launching'
+    } elseif ($profile.pendingPair) {
+      if ($profile.pendingIdentity -and $state.Status -notin @('address-needed', 'pairing-required')) {
+        Start-Work 'discover' @{ Identity = $profile.pendingIdentity } 'discovering'
+      } elseif ($state.Status -eq 'pairing-required') {
+        Show-PairForm
+      } else {
+        Show-ConnectAddress $false
+      }
+    } elseif ($state.Status -eq 'pairing-required') {
+      Show-PairForm
+    } elseif ($profile.identity -and $state.Status -ne 'address-needed') {
+      Start-Work 'monitor' @{ Identity = $profile.identity; Address = $profile.endpoint; HardwareSerial = $profile.hardwareSerial } 'connecting'
+    } elseif ($profile.endpoint -or $profile.identity -or ($profile.name -eq 'default' -and $legacyAddress)) {
+      Show-ConnectAddress $true
+    } else {
+      Show-PairForm
+    }
+  })
+$btnPair.Add_Click({
+    $address = $pairAddress.Text.Trim()
+    $code = $pairCode.Text
+    Start-Work 'pair' @{ Address = $address; Code = $code } 'pairing'
+  })
+$btnManual.Add_Click({
+    $state.Mode = 'wifi'
+    Show-ConnectAddress $true
+  })
+$btnNewPair.Add_Click({ Show-PairForm })
+$btnPairManual.Add_Click({ Show-ConnectAddress $true })
+$btnAddress.Add_Click({
+    $profile = $profileList.SelectedItem
+    $identity = if ($profile.pendingPair) { $profile.pendingIdentity } else { $profile.identity }
+    $storedSerial = if ($profile.pendingPair) { '' } else { $profile.hardwareSerial }
+    Start-Work 'manual' @{ Identity = $identity; Address = $addressInput.Text.Trim(); HardwareSerial = $storedSerial } 'connecting'
+  })
+$btnUsb.Add_Click({
+    if ($state.Control -and $state.Mode -eq 'usb') {
+      Stop-Control
+      Set-State 'disconnected'
+    } else { Start-Usb $state.UsbSerial }
+  })
+$btnUsbOther.Add_Click({
+    $state.UsbSerial = ''
+    Start-Usb ''
+  })
+$btnUsbSelect.Add_Click({
+    if ($usbList.SelectedItem) { Start-Usb $usbList.SelectedItem.Serial }
+  })
+$usbList.Add_SelectedIndexChanged({ Show-State })
+foreach ($cancelButton in @($btnCancel, $btnUsbCancel, $btnCancelPair, $btnCancelAddress)) {
+  $cancelButton.Add_Click({ if ($state.Job) { $state.Job.Token.Cancel(); Show-State } })
+}
+$btnBackPair.Add_Click({ Open-Home })
+$btnBackAddress.Add_Click({ Open-Home })
+$btnBackUsb.Add_Click({ Open-Home })
+$form.Add_KeyDown({
+    param($sender, $eventArgs)
+    if ($eventArgs.KeyCode -ne [Windows.Forms.Keys]::Escape) { return }
+    if ($state.Job) { $state.Job.Token.Cancel(); Show-State }
+    elseif ($state.View -ne 'home') { Open-Home }
+    else { return }
+    $eventArgs.Handled = $true
+    $eventArgs.SuppressKeyPress = $true
   })
 
-if (-not $profiles.items -or $profiles.items.Count -eq 0) {
-  $profiles.items = @([pscustomobject]@{ name = "default"; endpoint = "" })
-  $profiles.defaultProfile = "default"
-}
-if ($settings.language -notin @("zh-CN", "en-US")) { $settings.language = "zh-CN" }
-if ($settings.theme -notin @("dark", "light")) { $settings.theme = "dark" }
-
-function T {
-  param([Parameter(Mandatory = $true)][string]$Key)
-  return $i18n[$script:settings.language][$Key]
-}
-
-function Save-Settings { Write-JsonFile -Path $paths.SettingsFile -Value $script:settings }
-function Save-Profiles { Write-JsonFile -Path $paths.ProfileFile -Value $script:profiles }
-function Find-ProfileByName { param([string]$Name) return $script:profiles.items | Where-Object { $_.name -eq $Name } | Select-Object -First 1 }
-
-function Refresh-ProfileCombo {
-  param([string]$PreferredName)
-  $current = $PreferredName
-  $cmbProfile.Items.Clear()
-  foreach ($item in $profiles.items) { [void]$cmbProfile.Items.Add($item.name) }
-  if ($cmbProfile.Items.Count -eq 0) { [void]$cmbProfile.Items.Add("default") }
-  if (-not $current -or -not ($cmbProfile.Items -contains $current)) { $current = [string]$profiles.defaultProfile }
-  if (-not $current -or -not ($cmbProfile.Items -contains $current)) { $current = [string]$cmbProfile.Items[0] }
-  $cmbProfile.SelectedItem = $current
-}
-
-function Append-Log {
-  param([string]$Message, [string]$Level = "INFO")
-  $line = "{0}  [{1}] {2}" -f (Get-Date -Format "HH:mm:ss"), $Level, $Message
-  $txtLog.AppendText($line + [Environment]::NewLine)
-  Write-AppLog -Message $Message -Level $Level
-}
-
-function Get-LocalizedState {
-  param([string]$Raw)
-  switch ($Raw) {
-    "connected" { return T "state_connected" }
-    "reconnecting" { return T "state_reconnecting" }
-    "pairing-required" { return T "state_pairing_required" }
-    default { return T "state_disconnected" }
-  }
-}
-
-function Set-UiStatus {
-  param([string]$Status, [string]$Message)
-  $lblStatusValue.Text = Get-LocalizedState -Raw $Status
-  switch ($Status) {
-    "connected" { $lblStatusValue.ForeColor = [System.Drawing.Color]::FromArgb(67, 160, 71) }
-    "reconnecting" { $lblStatusValue.ForeColor = [System.Drawing.Color]::FromArgb(251, 140, 0) }
-    default { $lblStatusValue.ForeColor = [System.Drawing.Color]::FromArgb(229, 57, 53) }
-  }
-  $lblEndpointValue.Text = $txtConnectEndpoint.Text.Trim()
-  if ($Message) { Append-Log -Message "$($lblStatusValue.Text): $Message" }
-}
-
-function Show-RuntimeRepairHint {
-  param([string]$Detail)
-
-  $missingMsg = T "msg_runtime_missing"
-  $guideMsg = T "msg_runtime_fix_guide"
-  Append-Log -Message $missingMsg -Level "ERROR"
-  if ($Detail) { Append-Log -Message $Detail -Level "ERROR" }
-  Append-Log -Message $guideMsg -Level "WARN"
-  $body = "$missingMsg`n`n$guideMsg"
-  if ($Detail) { $body = "$missingMsg`n`n$Detail`n`n$guideMsg" }
-  [System.Windows.Forms.MessageBox]::Show($body, (T "app_title"), [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
-}
-
-function Ensure-RuntimeAvailable {
-  $runtime = Test-ScrcpyRuntime
-  if (-not $runtime.Success) {
-    Show-RuntimeRepairHint -Detail $runtime.Message
-    Set-UiStatus -Status "disconnected" -Message $runtime.Message
-    return $false
-  }
-  return $true
-}
-
-function Set-ThemeColors {
-  if ($settings.theme -eq "dark") {
-    $script:theme = @{
-      Back = [System.Drawing.Color]::FromArgb(30, 32, 36)
-      Card = [System.Drawing.Color]::FromArgb(40, 43, 48)
-      Fore = [System.Drawing.Color]::FromArgb(236, 239, 241)
-      Muted = [System.Drawing.Color]::FromArgb(170, 180, 190)
-      InputBack = [System.Drawing.Color]::FromArgb(50, 54, 60)
-      Accent = [System.Drawing.Color]::FromArgb(66, 165, 245)
-    }
-  }
-  else {
-    $script:theme = @{
-      Back = [System.Drawing.Color]::FromArgb(245, 247, 250)
-      Card = [System.Drawing.Color]::FromArgb(255, 255, 255)
-      Fore = [System.Drawing.Color]::FromArgb(33, 37, 41)
-      Muted = [System.Drawing.Color]::FromArgb(96, 106, 116)
-      InputBack = [System.Drawing.Color]::FromArgb(255, 255, 255)
-      Accent = [System.Drawing.Color]::FromArgb(25, 118, 210)
-    }
-  }
-}
-
-function Apply-Theme {
-  Set-ThemeColors
-  $fontRegular = New-Object System.Drawing.Font("Segoe UI", 10)
-  $fontTitle = New-Object System.Drawing.Font("Segoe UI Semibold", 11)
-
-  $form.BackColor = $theme.Back
-  $form.ForeColor = $theme.Fore
-  foreach ($p in @($topPanel, $statusPanel, $contentPanel)) { $p.BackColor = $theme.Card }
-  foreach ($ctrl in @($lblTopTitle, $lblLang, $lblTheme, $lblProfile, $lblProfileName, $lblStatusTitle, $lblEndpointTitle, $chkMonitor, $lblPairEndpoint, $lblPairCode, $lblConnectEndpoint, $lblControlEndpoint, $lblBitrate, $lblFps, $lblMaxSize, $lblMonitorInt, $lblAbout)) {
-    $ctrl.ForeColor = $theme.Fore
-    $ctrl.Font = $fontRegular
-  }
-  foreach ($btn in @($btnSaveProfile, $btnDeleteProfile, $btnPair, $btnConnect, $btnControl, $btnSaveSettings, $btnClearLogs, $btnOpenLogs)) {
-    $btn.BackColor = $theme.Accent
-    $btn.ForeColor = [System.Drawing.Color]::White
-    $btn.FlatStyle = "Flat"
-    $btn.FlatAppearance.BorderSize = 0
-    $btn.Font = $fontRegular
-  }
-  foreach ($input in @($cmbLang, $cmbTheme, $cmbProfile, $txtProfileName, $txtPairEndpoint, $txtPairCode, $txtConnectEndpoint, $txtControlEndpoint, $txtBitrate, $numFps, $numMaxSize, $numMonitorInterval, $txtLog)) {
-    $input.BackColor = $theme.InputBack
-    $input.ForeColor = $theme.Fore
-    $input.Font = $fontRegular
-  }
-  $lblTopTitle.Font = $fontTitle
-  $lblTopTitle.ForeColor = $theme.Accent
-  $lblStatusValue.Font = $fontTitle
-  $lblEndpointValue.ForeColor = $theme.Muted
-  $lblAbout.ForeColor = $theme.Muted
-  $tabs.BackColor = $theme.Card
-  $tabs.ForeColor = $theme.Fore
-}
-
-function Refresh-LocalizedText {
-  $form.Text = T "app_title"
-  $lblTopTitle.Text = T "top_title"
-  $lblLang.Text = T "language"
-  $lblTheme.Text = T "theme"
-  $lblProfile.Text = T "profile"
-  $lblProfileName.Text = T "profile_name"
-  $btnSaveProfile.Text = T "save_profile"
-  $btnDeleteProfile.Text = T "delete_profile"
-  $lblStatusTitle.Text = T "status"
-  $lblEndpointTitle.Text = T "endpoint"
-  $chkMonitor.Text = T "monitor"
-  $tabPair.Text = T "tab_pair"
-  $tabControl.Text = T "tab_control"
-  $tabSettings.Text = T "tab_settings"
-  $tabLogs.Text = T "tab_logs"
-  $tabAbout.Text = T "tab_about"
-  $lblPairEndpoint.Text = T "pair_endpoint"
-  $lblPairCode.Text = T "pair_code"
-  $lblConnectEndpoint.Text = T "connect_endpoint"
-  $btnPair.Text = T "btn_pair"
-  $lblControlEndpoint.Text = T "connect_endpoint"
-  $btnConnect.Text = T "btn_connect"
-  $btnControl.Text = T "btn_control"
-  $lblBitrate.Text = T "bitrate"
-  $lblFps.Text = T "fps"
-  $lblMaxSize.Text = T "max_size"
-  $lblMonitorInt.Text = T "monitor_interval"
-  $btnSaveSettings.Text = T "save_settings"
-  $btnClearLogs.Text = T "clear_logs"
-  $btnOpenLogs.Text = T "open_logs"
-  $lblAbout.Text = T "about_text"
-}
-
-$form = New-Object System.Windows.Forms.Form
-$form.Size = New-Object System.Drawing.Size(1020, 700)
-$form.StartPosition = "CenterScreen"
-$form.MinimumSize = New-Object System.Drawing.Size(940, 640)
-
-$topPanel = New-Object System.Windows.Forms.Panel
-$topPanel.Location = New-Object System.Drawing.Point(16, 14)
-$topPanel.Size = New-Object System.Drawing.Size(970, 90)
-
-$lblTopTitle = New-Object System.Windows.Forms.Label
-$lblTopTitle.Location = New-Object System.Drawing.Point(18, 14)
-$lblTopTitle.AutoSize = $true
-
-$lblLang = New-Object System.Windows.Forms.Label
-$lblLang.Location = New-Object System.Drawing.Point(18, 50)
-$lblLang.AutoSize = $true
-$cmbLang = New-Object System.Windows.Forms.ComboBox
-$cmbLang.Location = New-Object System.Drawing.Point(74, 46)
-$cmbLang.Size = New-Object System.Drawing.Size(90, 28)
-$cmbLang.DropDownStyle = "DropDownList"
-[void]$cmbLang.Items.AddRange(@("中文", "English"))
-$cmbLang.SelectedIndex = if ($settings.language -eq "en-US") { 1 } else { 0 }
-
-$lblTheme = New-Object System.Windows.Forms.Label
-$lblTheme.Location = New-Object System.Drawing.Point(180, 50)
-$lblTheme.AutoSize = $true
-$cmbTheme = New-Object System.Windows.Forms.ComboBox
-$cmbTheme.Location = New-Object System.Drawing.Point(232, 46)
-$cmbTheme.Size = New-Object System.Drawing.Size(90, 28)
-$cmbTheme.DropDownStyle = "DropDownList"
-[void]$cmbTheme.Items.AddRange(@("Dark", "Light"))
-$cmbTheme.SelectedIndex = if ($settings.theme -eq "light") { 1 } else { 0 }
-
-$lblProfile = New-Object System.Windows.Forms.Label
-$lblProfile.Location = New-Object System.Drawing.Point(350, 50)
-$lblProfile.AutoSize = $true
-$cmbProfile = New-Object System.Windows.Forms.ComboBox
-$cmbProfile.Location = New-Object System.Drawing.Point(406, 46)
-$cmbProfile.Size = New-Object System.Drawing.Size(150, 28)
-$cmbProfile.DropDownStyle = "DropDownList"
-
-$lblProfileName = New-Object System.Windows.Forms.Label
-$lblProfileName.Location = New-Object System.Drawing.Point(566, 50)
-$lblProfileName.AutoSize = $true
-$txtProfileName = New-Object System.Windows.Forms.TextBox
-$txtProfileName.Location = New-Object System.Drawing.Point(638, 46)
-$txtProfileName.Size = New-Object System.Drawing.Size(118, 28)
-$btnSaveProfile = New-Object System.Windows.Forms.Button
-$btnSaveProfile.Location = New-Object System.Drawing.Point(764, 45)
-$btnSaveProfile.Size = New-Object System.Drawing.Size(96, 30)
-$btnDeleteProfile = New-Object System.Windows.Forms.Button
-$btnDeleteProfile.Location = New-Object System.Drawing.Point(866, 45)
-$btnDeleteProfile.Size = New-Object System.Drawing.Size(96, 30)
-
-$topPanel.Controls.AddRange(@($lblTopTitle, $lblLang, $cmbLang, $lblTheme, $cmbTheme, $lblProfile, $cmbProfile, $lblProfileName, $txtProfileName, $btnSaveProfile, $btnDeleteProfile))
-
-$statusPanel = New-Object System.Windows.Forms.Panel
-$statusPanel.Location = New-Object System.Drawing.Point(16, 112)
-$statusPanel.Size = New-Object System.Drawing.Size(970, 60)
-
-$lblStatusTitle = New-Object System.Windows.Forms.Label
-$lblStatusTitle.Location = New-Object System.Drawing.Point(18, 20)
-$lblStatusTitle.AutoSize = $true
-$lblStatusValue = New-Object System.Windows.Forms.Label
-$lblStatusValue.Location = New-Object System.Drawing.Point(72, 18)
-$lblStatusValue.AutoSize = $true
-$lblEndpointTitle = New-Object System.Windows.Forms.Label
-$lblEndpointTitle.Location = New-Object System.Drawing.Point(240, 20)
-$lblEndpointTitle.AutoSize = $true
-$lblEndpointValue = New-Object System.Windows.Forms.Label
-$lblEndpointValue.Location = New-Object System.Drawing.Point(314, 20)
-$lblEndpointValue.AutoSize = $true
-$chkMonitor = New-Object System.Windows.Forms.CheckBox
-$chkMonitor.Location = New-Object System.Drawing.Point(730, 18)
-$chkMonitor.AutoSize = $true
-$chkMonitor.Checked = $true
-
-$statusPanel.Controls.AddRange(@($lblStatusTitle, $lblStatusValue, $lblEndpointTitle, $lblEndpointValue, $chkMonitor))
-
-$contentPanel = New-Object System.Windows.Forms.Panel
-$contentPanel.Location = New-Object System.Drawing.Point(16, 180)
-$contentPanel.Size = New-Object System.Drawing.Size(970, 470)
-
-$tabs = New-Object System.Windows.Forms.TabControl
-$tabs.Location = New-Object System.Drawing.Point(10, 10)
-$tabs.Size = New-Object System.Drawing.Size(950, 450)
-
-$tabPair = New-Object System.Windows.Forms.TabPage
-$tabControl = New-Object System.Windows.Forms.TabPage
-$tabSettings = New-Object System.Windows.Forms.TabPage
-$tabLogs = New-Object System.Windows.Forms.TabPage
-$tabAbout = New-Object System.Windows.Forms.TabPage
-$tabs.TabPages.AddRange(@($tabPair, $tabControl, $tabSettings, $tabLogs, $tabAbout))
-
-$lblPairEndpoint = New-Object System.Windows.Forms.Label
-$lblPairEndpoint.Location = New-Object System.Drawing.Point(30, 36)
-$lblPairEndpoint.AutoSize = $true
-$txtPairEndpoint = New-Object System.Windows.Forms.TextBox
-$txtPairEndpoint.Location = New-Object System.Drawing.Point(250, 32)
-$txtPairEndpoint.Size = New-Object System.Drawing.Size(320, 28)
-$lblPairCode = New-Object System.Windows.Forms.Label
-$lblPairCode.Location = New-Object System.Drawing.Point(30, 78)
-$lblPairCode.AutoSize = $true
-$txtPairCode = New-Object System.Windows.Forms.TextBox
-$txtPairCode.Location = New-Object System.Drawing.Point(250, 74)
-$txtPairCode.Size = New-Object System.Drawing.Size(320, 28)
-$lblConnectEndpoint = New-Object System.Windows.Forms.Label
-$lblConnectEndpoint.Location = New-Object System.Drawing.Point(30, 120)
-$lblConnectEndpoint.AutoSize = $true
-$txtConnectEndpoint = New-Object System.Windows.Forms.TextBox
-$txtConnectEndpoint.Location = New-Object System.Drawing.Point(250, 116)
-$txtConnectEndpoint.Size = New-Object System.Drawing.Size(320, 28)
-$btnPair = New-Object System.Windows.Forms.Button
-$btnPair.Location = New-Object System.Drawing.Point(590, 74)
-$btnPair.Size = New-Object System.Drawing.Size(220, 40)
-$tabPair.Controls.AddRange(@($lblPairEndpoint, $txtPairEndpoint, $lblPairCode, $txtPairCode, $lblConnectEndpoint, $txtConnectEndpoint, $btnPair))
-
-$lblControlEndpoint = New-Object System.Windows.Forms.Label
-$lblControlEndpoint.Location = New-Object System.Drawing.Point(30, 38)
-$lblControlEndpoint.AutoSize = $true
-$txtControlEndpoint = New-Object System.Windows.Forms.TextBox
-$txtControlEndpoint.Location = New-Object System.Drawing.Point(250, 34)
-$txtControlEndpoint.Size = New-Object System.Drawing.Size(320, 28)
-$btnConnect = New-Object System.Windows.Forms.Button
-$btnConnect.Location = New-Object System.Drawing.Point(590, 32)
-$btnConnect.Size = New-Object System.Drawing.Size(220, 40)
-$btnControl = New-Object System.Windows.Forms.Button
-$btnControl.Location = New-Object System.Drawing.Point(590, 82)
-$btnControl.Size = New-Object System.Drawing.Size(220, 40)
-$tabControl.Controls.AddRange(@($lblControlEndpoint, $txtControlEndpoint, $btnConnect, $btnControl))
-
-$lblBitrate = New-Object System.Windows.Forms.Label
-$lblBitrate.Location = New-Object System.Drawing.Point(30, 36)
-$lblBitrate.AutoSize = $true
-$txtBitrate = New-Object System.Windows.Forms.TextBox
-$txtBitrate.Location = New-Object System.Drawing.Point(250, 32)
-$txtBitrate.Size = New-Object System.Drawing.Size(120, 28)
-$lblFps = New-Object System.Windows.Forms.Label
-$lblFps.Location = New-Object System.Drawing.Point(30, 76)
-$lblFps.AutoSize = $true
-$numFps = New-Object System.Windows.Forms.NumericUpDown
-$numFps.Location = New-Object System.Drawing.Point(250, 72)
-$numFps.Size = New-Object System.Drawing.Size(120, 28)
-$numFps.Minimum = 5
-$numFps.Maximum = 120
-$lblMaxSize = New-Object System.Windows.Forms.Label
-$lblMaxSize.Location = New-Object System.Drawing.Point(30, 116)
-$lblMaxSize.AutoSize = $true
-$numMaxSize = New-Object System.Windows.Forms.NumericUpDown
-$numMaxSize.Location = New-Object System.Drawing.Point(250, 112)
-$numMaxSize.Size = New-Object System.Drawing.Size(120, 28)
-$numMaxSize.Minimum = 640
-$numMaxSize.Maximum = 2160
-$lblMonitorInt = New-Object System.Windows.Forms.Label
-$lblMonitorInt.Location = New-Object System.Drawing.Point(30, 156)
-$lblMonitorInt.AutoSize = $true
-$numMonitorInterval = New-Object System.Windows.Forms.NumericUpDown
-$numMonitorInterval.Location = New-Object System.Drawing.Point(250, 152)
-$numMonitorInterval.Size = New-Object System.Drawing.Size(120, 28)
-$numMonitorInterval.Minimum = 3
-$numMonitorInterval.Maximum = 120
-$btnSaveSettings = New-Object System.Windows.Forms.Button
-$btnSaveSettings.Location = New-Object System.Drawing.Point(250, 202)
-$btnSaveSettings.Size = New-Object System.Drawing.Size(180, 38)
-$tabSettings.Controls.AddRange(@($lblBitrate, $txtBitrate, $lblFps, $numFps, $lblMaxSize, $numMaxSize, $lblMonitorInt, $numMonitorInterval, $btnSaveSettings))
-
-$txtLog = New-Object System.Windows.Forms.TextBox
-$txtLog.Location = New-Object System.Drawing.Point(20, 20)
-$txtLog.Size = New-Object System.Drawing.Size(890, 320)
-$txtLog.Multiline = $true
-$txtLog.ScrollBars = "Vertical"
-$txtLog.ReadOnly = $true
-$btnClearLogs = New-Object System.Windows.Forms.Button
-$btnClearLogs.Location = New-Object System.Drawing.Point(20, 350)
-$btnClearLogs.Size = New-Object System.Drawing.Size(150, 34)
-$btnOpenLogs = New-Object System.Windows.Forms.Button
-$btnOpenLogs.Location = New-Object System.Drawing.Point(180, 350)
-$btnOpenLogs.Size = New-Object System.Drawing.Size(190, 34)
-$tabLogs.Controls.AddRange(@($txtLog, $btnClearLogs, $btnOpenLogs))
-
-$lblAbout = New-Object System.Windows.Forms.Label
-$lblAbout.Location = New-Object System.Drawing.Point(30, 26)
-$lblAbout.Size = New-Object System.Drawing.Size(880, 200)
-$tabAbout.Controls.Add($lblAbout)
-
-$contentPanel.Controls.Add($tabs)
-$form.Controls.AddRange(@($topPanel, $statusPanel, $contentPanel))
-
-Refresh-ProfileCombo -PreferredName $profiles.defaultProfile
-$selectedProfile = [string]$cmbProfile.SelectedItem
-$txtProfileName.Text = $selectedProfile
-$p = Find-ProfileByName -Name $selectedProfile
-if ($p) {
-  $txtConnectEndpoint.Text = $p.endpoint
-  $txtControlEndpoint.Text = $p.endpoint
-}
-
-$txtBitrate.Text = [string]$settings.bitrate
-$numFps.Value = [int]$settings.maxFps
-$numMaxSize.Value = [int]$settings.maxSize
-$numMonitorInterval.Value = [int]$settings.monitorIntervalSec
-
-Refresh-LocalizedText
-Apply-Theme
-
-$cmbLang.Add_SelectedIndexChanged({
-    $settings.language = if ($cmbLang.SelectedIndex -eq 1) { "en-US" } else { "zh-CN" }
-    Save-Settings
-    Refresh-LocalizedText
-    Set-UiStatus -Status "disconnected" -Message ""
+$profileList.Add_SelectedIndexChanged({
+    if ($state.LoadingProfiles -or -not $profileList.SelectedItem) { return }
+    $profiles.defaultProfile = $profileList.SelectedItem.name
+    try { Save-Profiles } catch { Add-Diagnostic $_.Exception.Message }
+    $state.Device = $null
+    $state.Mode = 'wifi'
+    $state.View = 'home'
+    $state.NextMonitor = [DateTime]::UtcNow
+    Set-State 'disconnected'
   })
-
-$cmbTheme.Add_SelectedIndexChanged({
-    $settings.theme = if ($cmbTheme.SelectedIndex -eq 1) { "light" } else { "dark" }
-    Save-Settings
-    Apply-Theme
-    Append-Log -Message "Theme switched: $($settings.theme)"
-  })
-
-$cmbProfile.Add_SelectedIndexChanged({
-    $name = [string]$cmbProfile.SelectedItem
-    $txtProfileName.Text = $name
-    $p2 = Find-ProfileByName -Name $name
-    if ($p2) {
-      $txtConnectEndpoint.Text = $p2.endpoint
-      $txtControlEndpoint.Text = $p2.endpoint
-      $lblEndpointValue.Text = $p2.endpoint
-      Append-Log -Message "Loaded profile: $name"
+$btnAddProfile.Add_Click({
+    $name = $profileName.Text.Trim()
+    if (-not $name -or $profiles.items.name -contains $name) { return }
+    $profiles.items = @($profiles.items) + [pscustomobject]@{
+      name = $name; endpoint = ''; identity = ''; hardwareSerial = ''; model = ''; pendingIdentity = ''; pendingPair = $false
     }
-  })
-
-$btnSaveProfile.Add_Click({
-    $name = $txtProfileName.Text.Trim()
-    if (-not $name) { $name = "default" }
-    $endpoint = $txtConnectEndpoint.Text.Trim()
-    $existing = Find-ProfileByName -Name $name
-    if ($existing) {
-      $existing.endpoint = $endpoint
-    }
-    else {
-      $profiles.items += [pscustomobject]@{ name = $name; endpoint = $endpoint }
-    }
+    $profileName.Clear()
     $profiles.defaultProfile = $name
     Save-Profiles
-    Refresh-ProfileCombo -PreferredName $name
-    Append-Log -Message "$(T "msg_profile_saved"): $name"
+    Update-Profiles $name
+    $state.Device = $null
+    $state.Mode = 'wifi'
+    $state.View = 'home'
+    Set-State 'disconnected'
   })
-
 $btnDeleteProfile.Add_Click({
-    $name = [string]$cmbProfile.SelectedItem
-    if (-not $name) { return }
-    if ($name -eq "default") {
-      Append-Log -Message (T "msg_cannot_delete_default") -Level "WARN"
-      return
-    }
-    $profiles.items = @($profiles.items | Where-Object { $_.name -ne $name })
-    if ($profiles.items.Count -eq 0) {
-      $profiles.items = @([pscustomobject]@{ name = "default"; endpoint = "" })
-    }
-    $profiles.defaultProfile = [string]$profiles.items[0].name
+    $selected = $profileList.SelectedItem
+    if (-not $selected -or $selected.name -eq 'default') { return }
+    if ([Windows.Forms.MessageBox]::Show($form, (Text-For 'deleteQuestion'), $form.Text, 'YesNo', 'Question') -ne 'Yes') { return }
+    $profiles.items = @($profiles.items | Where-Object { $_.name -ne $selected.name })
+    $profiles.defaultProfile = 'default'
     Save-Profiles
-    Refresh-ProfileCombo -PreferredName $profiles.defaultProfile
-    Append-Log -Message "$(T "msg_profile_deleted"): $name"
+    Update-Profiles 'default'
+    $state.Device = $null
+    $state.Mode = 'wifi'
+    $state.View = 'home'
+    Set-State 'disconnected'
   })
 
-$btnPair.Add_Click({
-    try {
-      if (-not (Ensure-RuntimeAvailable)) { return }
-      $pairEndpoint = $txtPairEndpoint.Text.Trim()
-      $pairCode = $txtPairCode.Text.Trim()
-      $connectEndpoint = $txtConnectEndpoint.Text.Trim()
-      if (-not $pairEndpoint -or -not $pairCode) {
-        [System.Windows.Forms.MessageBox]::Show((T "msg_input_required"), (T "app_title")) | Out-Null
-        return
-      }
-      Set-UiStatus -Status "reconnecting" -Message (T "msg_pairing")
-      $result = Invoke-DevicePairing -PairEndpoint $pairEndpoint -PairCode $pairCode -ConnectEndpoint $connectEndpoint
-      if (-not $result.Success) {
-        Set-UiStatus -Status "pairing-required" -Message $result.Message
-        return
-      }
-      $txtConnectEndpoint.Text = $result.ConnectEndpoint
-      $txtControlEndpoint.Text = $result.ConnectEndpoint
-      Set-UiStatus -Status "connected" -Message $result.Message
-    }
-    catch {
-      if ($_.Exception.Message -like "*runtime\scrcpy*" -or $_.Exception.Message -like "*Release package is incomplete*") {
-        Show-RuntimeRepairHint -Detail $_.Exception.Message
-        Set-UiStatus -Status "disconnected" -Message $_.Exception.Message
-        return
-      }
-      Set-UiStatus -Status "pairing-required" -Message $_.Exception.Message
-    }
-  })
-
-$btnConnect.Add_Click({
-    try {
-      if (-not (Ensure-RuntimeAvailable)) { return }
-      Set-UiStatus -Status "reconnecting" -Message (T "msg_connecting")
-      $result = Invoke-DeviceConnection -PreferredEndpoint $txtControlEndpoint.Text.Trim()
-      if ($result.Success) {
-        $txtControlEndpoint.Text = $result.Endpoint
-        $txtConnectEndpoint.Text = $result.Endpoint
-        Set-UiStatus -Status "connected" -Message $result.Message
-      }
-      else {
-        Set-UiStatus -Status "pairing-required" -Message $result.Message
-      }
-    }
-    catch {
-      if ($_.Exception.Message -like "*runtime\scrcpy*" -or $_.Exception.Message -like "*Release package is incomplete*") {
-        Show-RuntimeRepairHint -Detail $_.Exception.Message
-        Set-UiStatus -Status "disconnected" -Message $_.Exception.Message
-        return
-      }
-      Set-UiStatus -Status "pairing-required" -Message $_.Exception.Message
-    }
-  })
-
-$btnControl.Add_Click({
-    try {
-      if (-not (Ensure-RuntimeAvailable)) { return }
-
-      $ensure = Invoke-DeviceConnection -PreferredEndpoint $txtControlEndpoint.Text.Trim()
-      if (-not $ensure.Success) {
-        Set-UiStatus -Status "pairing-required" -Message $ensure.Message
-        return
-      }
-      $txtControlEndpoint.Text = $ensure.Endpoint
-      $txtConnectEndpoint.Text = $ensure.Endpoint
-      $start = Start-ScrcpyControl -Endpoint $ensure.Endpoint -Bitrate $settings.bitrate -MaxFps $settings.maxFps -MaxSize $settings.maxSize
-      if (-not $start.Success) {
-        Set-UiStatus -Status "disconnected" -Message $start.Message
-        if ($start.Message -like "*runtime\scrcpy*" -or $start.Message -like "*Release package is incomplete*" -or $start.Message -like "*scrcpy.exe not found*") {
-          Show-RuntimeRepairHint -Detail $start.Message
-        }
-        return
-      }
-      Set-UiStatus -Status "connected" -Message $start.Message
-    }
-    catch {
-      if ($_.Exception.Message -like "*runtime\scrcpy*" -or $_.Exception.Message -like "*Release package is incomplete*" -or $_.Exception.Message -like "*scrcpy.exe not found*") {
-        Show-RuntimeRepairHint -Detail $_.Exception.Message
-        Set-UiStatus -Status "disconnected" -Message $_.Exception.Message
-      }
-      else {
-        Set-UiStatus -Status "pairing-required" -Message $_.Exception.Message
-      }
-    }
-  })
+function Refresh-Language {
+  $form.Text = Text-For 'title'
+  foreach ($entry in $captions) { $entry.Control.Text = Text-For $entry.Key }
+  foreach ($field in @(
+      @{ Key = 'profile'; Control = $profileList }, @{ Key = 'profileName'; Control = $profileName },
+      @{ Key = 'pairAddress'; Control = $pairAddress }, @{ Key = 'pairCode'; Control = $pairCode },
+      @{ Key = 'addressLabel'; Control = $addressInput }, @{ Key = 'chooseUsb'; Control = $usbList },
+      @{ Key = 'language'; Control = $langList }, @{ Key = 'theme'; Control = $themeList },
+      @{ Key = 'bitrate'; Control = $bitrate }, @{ Key = 'interval'; Control = $interval },
+      @{ Key = 'fps'; Control = $fps }, @{ Key = 'size'; Control = $maxSize })) {
+    $field.Control.AccessibleName = Text-For $field.Key
+  }
+  Show-State
+}
 
 $btnSaveSettings.Add_Click({
-    $settings.bitrate = $txtBitrate.Text.Trim()
-    $settings.maxFps = [int]$numFps.Value
-    $settings.maxSize = [int]$numMaxSize.Value
-    $settings.monitorIntervalSec = [int]$numMonitorInterval.Value
-    Save-Settings
-    $timer.Interval = [int]$settings.monitorIntervalSec * 1000
-    Append-Log -Message (T "msg_settings_saved")
-  })
-
-$btnClearLogs.Add_Click({ $txtLog.Clear() })
-$btnOpenLogs.Add_Click({ Start-Process explorer.exe $paths.Logs | Out-Null })
-
-$timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = [int]$settings.monitorIntervalSec * 1000
-$timer.Add_Tick({
-    if (-not $chkMonitor.Checked) { return }
-    $runtime = Test-ScrcpyRuntime
-    if (-not $runtime.Success) {
-      Set-UiStatus -Status "disconnected" -Message $runtime.Message
+    $settings.language = if ($langList.SelectedIndex -eq 1) { 'en-US' } else { 'zh-CN' }
+    if ($bitrate.Text.Trim() -notmatch '^[1-9][0-9]{0,8}[KM]?$') {
+      $settingsNote.Text = Text-For 'badBitrate'
       return
     }
-    $state = Get-ConnectionStatus -Endpoint $txtControlEndpoint.Text.Trim()
-    if ($state.Endpoint) {
-      $txtControlEndpoint.Text = $state.Endpoint
-      $txtConnectEndpoint.Text = $state.Endpoint
-    }
-    if ($state.Status -eq "connected") {
-      $lblStatusValue.Text = Get-LocalizedState -Raw "connected"
-      $lblStatusValue.ForeColor = [System.Drawing.Color]::FromArgb(67, 160, 71)
-      $lblEndpointValue.Text = $txtControlEndpoint.Text.Trim()
-    }
-    else {
-      Set-UiStatus -Status $state.Status -Message $state.Message
-    }
+    $settings.theme = if ($themeList.SelectedIndex -eq 1) { 'dark' } else { 'light' }
+    $settings.bitrate = $bitrate.Text.Trim().ToUpperInvariant()
+    $settings.maxFps = [int]$fps.Value
+    $settings.maxSize = [int]$maxSize.Value
+    $settings.monitorIntervalSec = [int]$interval.Value
+    $settings.autoReconnect = $autoReconnect.Checked
+    Write-JsonFile -Path $paths.SettingsFile -Value $settings
+    Apply-Appearance
+    Refresh-Language
+    $settingsNote.Text = Text-For 'saved'
   })
-$timer.Start()
 
-Append-Log -Message "GUI started."
-Set-UiStatus -Status "disconnected" -Message ""
-$startupRuntime = Test-ScrcpyRuntime
-if (-not $startupRuntime.Success) {
-  Show-RuntimeRepairHint -Detail $startupRuntime.Message
-  Set-UiStatus -Status "disconnected" -Message $startupRuntime.Message
+foreach ($key in $optionChecks.Keys) {
+  $optionChecks[$key].Add_CheckedChanged({
+      foreach ($name in $optionChecks.Keys) { $settings.$name = $optionChecks[$name].Checked }
+      try { Write-JsonFile -Path $paths.SettingsFile -Value $settings } catch { Add-Diagnostic $_.Exception.Message }
+    })
 }
-[void]$form.ShowDialog()
+foreach ($key in $shortcutKeys.Keys) {
+  $shortcutButtons[$key].Tag = $shortcutKeys[$key]
+  $shortcutButtons[$key].Add_Click({
+      param($sender, $eventArgs)
+      if (-not $state.Control -or $state.Control.HasExited -or $state.Job) { return }
+      $serial = if ($state.Mode -eq 'wifi') { $profileList.SelectedItem.hardwareSerial } else { '' }
+      $state.ShortcutNote = ''
+      Start-Work 'shortcut' @{ Device = $state.Device; HardwareSerial = $serial; KeyCode = [int]$sender.Tag }
+    })
+}
+
+$btnClearLogs.Add_Click({ $logBox.Clear() })
+$btnOpenLogs.Add_Click({ Start-Process explorer.exe ('"{0}"' -f $paths.Logs) })
+$timer = New-Object Windows.Forms.Timer
+$timer.Interval = 125
+$timer.Add_Tick({
+    Receive-Work
+    if ($state.Control -and $state.Control.HasExited) {
+      $exitCode = $state.Control.ExitCode
+      Stop-Control
+      if ($exitCode -ne 0 -and (Test-Path -LiteralPath $state.ErrorLog)) {
+        Add-Diagnostic (Get-Content -LiteralPath $state.ErrorLog -Raw -ErrorAction SilentlyContinue)
+      }
+      if ($state.Mode -eq 'usb' -and $state.UsbSerial) {
+        Start-Work 'usb-status' @{ Serial = $state.UsbSerial } 'usb-wait'
+      } else {
+        $state.Device = $null
+        Set-State 'disconnected'
+      }
+    }
+    if ($state.Job -or $state.Control -or $state.Mode -ne 'wifi' -or $state.View -ne 'home' -or
+        -not $settings.autoReconnect -or -not $state.Runtime.Success -or [DateTime]::UtcNow -lt $state.NextMonitor) { return }
+    $profile = $profileList.SelectedItem
+    if ($profile.pendingPair -or -not $profile.identity -or $state.Status -eq 'pairing-required' -or $tabs.SelectedTab -ne $pageHome) { return }
+    $state.NextMonitor = [DateTime]::UtcNow.AddSeconds([int]$settings.monitorIntervalSec)
+    Start-Work 'monitor' @{ Identity = $profile.identity; Address = $profile.endpoint; HardwareSerial = $profile.hardwareSerial }
+  })
+$form.Add_FormClosing({
+    param($sender, $eventArgs)
+    $state.Closing = $true
+    if ($state.Job) { $state.Job.Token.Cancel() }
+    Stop-Control
+  })
+
+Update-Profiles $profiles.defaultProfile
+Apply-Appearance
+Refresh-Language
+if (-not $state.Runtime.Success) { Set-State 'runtime-missing' $state.Runtime.Message }
+$form.Add_Shown({ Show-State; $timer.Start() })
+try { [void]$form.ShowDialog() }
+finally {
+  $timer.Stop()
+  $timer.Dispose()
+  if ($state.Job) {
+    $state.Job.Token.Cancel()
+    [void]$state.Job.Handle.AsyncWaitHandle.WaitOne()
+    Receive-Work
+  }
+  $form.Dispose()
+  $headFont.Dispose()
+  $sectionFont.Dispose()
+}
