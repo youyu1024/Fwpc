@@ -30,7 +30,7 @@ Fwpc 是面向 Windows 10/11 x64 的 Android 投屏与键鼠控制工具，支�
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\connection.tests.ps1
     .\build-release.cmd
 
-构建会校验官方 scrcpy ZIP 的 SHA-256，并通过 ps2exe 打包启动器。v1.1.0 的产物为 release\WiFiPhoneControl-v1.1.0-win-x64.zip。验收项目见 [Windows 与 Android 发布检查](docs/release-acceptance.md)。
+构建会校验官方 scrcpy ZIP 的 SHA-256，并通过 ps2exe 打包启动器。
 
 ## 许可证
 
